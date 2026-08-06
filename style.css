@@ -38,6 +38,8 @@ html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--
 #hpfill{height:100%;width:100%;background:linear-gradient(90deg,#ff7a5c,#ffb36a);transition:width .1s linear}
 #hpbar #hptext{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   font-size:10px;font-weight:bold;color:#fff;text-shadow:0 1px 2px #000}
+#combo{margin-top:8px;text-align:center;color:var(--gold);font-weight:bold;font-size:clamp(13px,4vw,18px);
+  text-shadow:0 0 12px rgba(255,170,70,.6),0 2px 4px #000;letter-spacing:.5px}
 #pause-btn{position:absolute;top:calc(8px + var(--safe-t));right:12px;pointer-events:auto;
   width:40px;height:40px;border-radius:50%;border:1px solid var(--line);background:rgba(0,0,0,.35);
   color:var(--ink);font-weight:bold;letter-spacing:1px}
@@ -122,6 +124,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--
   display:flex;gap:14px;align-items:center;transition:transform .08s,border-color .15s}
 .up-card:active{transform:scale(.98)}
 .up-card .uc-ic{font-size:30px;width:44px;text-align:center;flex:0 0 auto}
+.up-card .uc-canvas{width:40px;height:40px;flex:0 0 auto;display:block}
 .up-card .uc-body{flex:1}
 .up-card .uc-name{font-weight:bold;font-size:16px}
 .up-card .uc-name .lvltag{font-size:11px;color:#8a806f;font-weight:normal;margin-left:6px}
