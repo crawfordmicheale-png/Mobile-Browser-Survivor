@@ -1351,6 +1351,11 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && sta
 
 // register service worker for offline / install-to-home-screen (https or localhost only)
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  let hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) { hadController = true; return; } // first install — no reload
+    location.reload(); // a new version took over — refresh to it
+  });
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
 

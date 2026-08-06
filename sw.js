@@ -1,6 +1,7 @@
 /* EMBER service worker — offline shell + install-to-home-screen.
-   Bump CACHE when assets change so clients pick up the new version. */
-const CACHE = 'ember-v1';
+   Network-first so a fresh deploy always wins when online, with the cache as
+   an offline fallback. Bump CACHE when the strategy changes. */
+const CACHE = 'ember-v2';
 const ASSETS = [
   '.', 'index.html', 'style.css', 'game.js',
   'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png',
@@ -20,13 +21,13 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
-  // cache-first: this is a fully static game
+  // Network-first: always try the live version, fall back to cache when offline.
   e.respondWith(
-    caches.match(req).then(hit => hit || fetch(req).then(res => {
+    fetch(req).then(res => {
       if (res && res.ok && res.type === 'basic') {
         const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy));
       }
       return res;
-    }).catch(() => caches.match('index.html')))
+    }).catch(() => caches.match(req).then(hit => hit || caches.match('index.html')))
   );
 });

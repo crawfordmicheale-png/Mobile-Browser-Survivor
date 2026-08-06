@@ -15,7 +15,15 @@ Open `index.html` in a browser (mobile or desktop), or serve the folder:
 python3 -m http.server 8080   # then visit http://localhost:8080
 ```
 
-For GitHub Pages: enable Pages on this branch/root and the game is live.
+### Deploying to GitHub Pages
+
+This repo deploys via GitHub Actions (`.github/workflows/pages.yml`), which is
+faster and more reliable than the legacy "build from a branch" path. One-time
+setup: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
+After that, every push to `main` publishes automatically in about a minute (see
+the run under the repo's **Actions** tab). A `.nojekyll` file keeps Pages from
+running the files through Jekyll, and the service worker is network-first, so a
+new deploy always shows up when you're online (no manual cache-clearing).
 
 ### Controls
 - **Move** — touch and drag anywhere; a floating stick appears under your thumb.
