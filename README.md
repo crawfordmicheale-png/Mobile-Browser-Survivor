@@ -34,12 +34,24 @@ new deploy always shows up when you're online (no manual cache-clearing).
 
 ## The loop
 
-1. **Descend.** Survive waves that thicken every minute; a **Warden** (boss with
-   spiral bullet patterns) arrives every 3 minutes.
-2. **Level up** mid-run — gain new weapons or stack passive upgrades.
-3. **Fall** (or hold to 20:00 and win). Every descent earns **cinders** whether
+1. **Descend.** Survive waves that thicken every minute. Foes escalate — husks,
+   shard swarms, brutes, aiming Sentinels, charging **Lancers**, dividing cells,
+   volatile **Igniters** (they burst into a ring of bolts on death), and circling
+   Orbiters. Every three minutes a boss rises, alternating between the **Warden**
+   (spiral fire) and the elite **Devourer** (aimed volleys + swarm summons).
+2. **Level up** mid-run — gain new weapons or stack passive upgrades. Each card
+   shows the weapon's live art.
+3. **Chain kills** to build a streak — keep the combo alive for bonus cinders.
+4. **Fall** (or hold to 20:00 and win). Every descent earns **cinders** whether
    you win or die.
-4. **Spend** cinders in the **Forge** and unlock **Embers**, then descend stronger.
+5. **Spend** cinders in the **Forge** and unlock **Embers**, then descend stronger.
+
+### Ways to play
+- **Descend** — the standard endless run.
+- **Trials** — optional curses (faster/tougher/more enemies, frailer you, harsher
+  bosses). Each raises the run's cinder payout; stack them for bigger rewards.
+- **Daily Trial** — a reproducible run seeded from the date, the same starting
+  sequence for everyone that day, with its own saved best.
 
 ## Deep meta-progression (persistent, saved to `localStorage`)
 
@@ -54,6 +66,14 @@ new deploy always shows up when you're online (no manual cache-clearing).
   Embers and are tracked across runs.
 - **Ascension (prestige)** — once you've invested enough in the Forge, ascend to
   reset all forge ranks and cinders for a permanent stacking power multiplier.
+- **Trials** — persistent per-run modifier toggles (curses) that trade difficulty
+  for a cinder-gain bonus.
+
+## Game feel
+
+Combat is juiced: brief **hit-stop** on crits, boss kills, and taking damage;
+floating **damage numbers** on direct hits; a **kill-streak combo** that pays out
+bonus cinders; and screen shake, particles, and a low-life vignette.
 
 ## Weapons (in-run)
 

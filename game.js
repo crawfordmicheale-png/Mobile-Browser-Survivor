@@ -8,7 +8,10 @@
 
 /* ------------------------------------------------------------------ helpers */
 const TAU = Math.PI * 2;
-const rand  = (a, b) => a + Math.random() * (b - a);
+// Swappable RNG source so Daily-seed runs are reproducible. Defaults to Math.random.
+let rngSrc = Math.random;
+function mulberry32(seed) { let a = seed >>> 0; return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const rand  = (a, b) => a + rngSrc() * (b - a);
 const randi = (a, b) => Math.floor(rand(a, b + 1));
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const lerp  = (a, b, t) => a + (b - a) * t;
@@ -92,6 +95,7 @@ function freshSave() {
     best: { time:0, level:0, kills:0 },
     totals: { runs:0, kills:0, time:0, cinders:0 },
     achievements: {},
+    trials: {}, dailyBest: { key:'', score:0, time:0 },
   };
 }
 let save;
@@ -106,6 +110,8 @@ function load() {
     save.best = Object.assign(f.best, save.best);
     save.totals = Object.assign(f.totals, save.totals);
     save.achievements = save.achievements || {};
+    save.trials = save.trials || {};
+    save.dailyBest = Object.assign(f.dailyBest, save.dailyBest);
   } catch (e) { save = freshSave(); }
 }
 function persist() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) {} }
@@ -182,10 +188,31 @@ let state = 'menu';               // menu|forge|embers|how|playing|levelup|pause
 let player = null;
 let enemies = [], shots = [], foeShots = [], motes = [], zones = [], parts = [], fx = [], drops = [];
 let cam = { x:0, y:0 };
-let runTime = 0, spawnTimer = 0, bossTimer = 0, killCount = 0, bossKills = 0;
+let runTime = 0, spawnTimer = 0, bossTimer = 0, killCount = 0, bossKills = 0, bossCount = 0;
 let shake = 0, levelQueue = 0, runCinders = 0, hasWon = false;
 let runUnlocks = [];
 let lastTimerSec = -1;
+// juice + run-config state
+let dmgTexts = [];
+let hitStop = 0;
+let combo = 0, comboT = 0, maxCombo = 0;
+let dailyMode = false;
+const defaultMods = () => ({ spawnRate:1, enemySpeed:1, enemyHp:1, bossRate:1, dmgTaken:1, cinderMult:1 });
+let runMods = defaultMods();
+
+// Trials — optional run modifiers that raise difficulty for more cinders.
+const TRIALS = [
+  { id:'swarm',   name:'Swarming Dark',    icon:'🌑', bonus:.15, desc:'Enemies spawn 60% faster.',     apply:(m)=>m.spawnRate*=1.6 },
+  { id:'frenzy',  name:'Frenzied',         icon:'💨', bonus:.15, desc:'Enemies move 30% faster.',       apply:(m)=>m.enemySpeed*=1.3 },
+  { id:'night',   name:'Endless Night',    icon:'🩸', bonus:.20, desc:'Enemies have 50% more life.',    apply:(m)=>m.enemyHp*=1.5 },
+  { id:'brittle', name:'Brittle Light',    icon:'🥀', bonus:.20, desc:'You have 30% less max life.',    apply:(m,p)=>p.maxHP*=0.7 },
+  { id:'glass',   name:'Glass',            icon:'💎', bonus:.25, desc:'You take double damage.',        apply:(m)=>m.dmgTaken*=2 },
+  { id:'wardens', name:'Relentless Wardens', icon:'☠', bonus:.20, desc:'Wardens arrive twice as often.', apply:(m)=>m.bossRate*=2 },
+];
+const trialById = id => TRIALS.find(t => t.id === id);
+function trialCinderMult() { return 1 + TRIALS.reduce((s, t) => s + (save.trials && save.trials[t.id] ? t.bonus : 0), 0); }
+function dateSeed() { const d = new Date(); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); }
+function todayKey() { const d = new Date(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); }
 
 function baseStats() {
   return {
@@ -202,6 +229,10 @@ function baseStats() {
 function xpNeeded(level) { return Math.floor(4 + (level - 1) * 4 + Math.pow(level, 1.7)); }
 
 function startRun() {
+  // seed: Daily runs are reproducible; normal runs use the system RNG.
+  rngSrc = dailyMode ? mulberry32(dateSeed()) : Math.random;
+  // run modifiers from Trials (Daily ignores trials for a fair shared challenge)
+  runMods = defaultMods();
   const ember = EMBERS.find(e => e.id === save.selectedEmber) || EMBERS[0];
   player = baseStats();
   // apply forge
@@ -211,6 +242,9 @@ function startRun() {
   player.damageMult *= a; player.maxHP = Math.floor(player.maxHP * a); player.greedMult *= a;
   // ember
   ember.mods(player);
+  // trials
+  if (!dailyMode) { TRIALS.forEach(t => { if (save.trials[t.id]) t.apply(runMods, player); }); }
+  runMods.cinderMult = dailyMode ? 1 : trialCinderMult();
   player.maxHP = Math.max(30, Math.floor(player.maxHP));
   player.hp = player.maxHP;
   player.xpNext = xpNeeded(player.level);
@@ -220,10 +254,11 @@ function startRun() {
   const w = weaponById(ember.weapon);
   player.weapons[ember.weapon] = { level: Math.min(w.maxLevel, startLvl), cd: 0, angle: 0 };
 
-  enemies = []; shots = []; foeShots = []; motes = []; zones = []; parts = []; fx = []; drops = [];
+  enemies = []; shots = []; foeShots = []; motes = []; zones = []; parts = []; fx = []; drops = []; dmgTexts = [];
   cam.x = 0; cam.y = 0;
-  runTime = 0; spawnTimer = .3; bossTimer = 180; killCount = 0; bossKills = 0;
+  runTime = 0; spawnTimer = .3; bossTimer = 180 / runMods.bossRate; killCount = 0; bossKills = 0; bossCount = 0;
   shake = 0; levelQueue = 0; runCinders = 0; hasWon = false; runUnlocks = []; lastTimerSec = -1;
+  hitStop = 0; combo = 0; comboT = 0; maxCombo = 0;
   // opening cluster so the swarm is on you quickly
   const r0 = Math.min(W, H) * 0.42 + 30;
   for (let i = 0; i < 5; i++) { const a = (i / 5) * TAU + rand(-.3, .3); spawnEnemy('drifter', player.x + Math.cos(a) * r0, player.y + Math.sin(a) * r0, 1); }
@@ -339,7 +374,10 @@ const ENEMY_INFO = {
   splitter: { name:'Divider',  color:'#6dff5c', desc:'A dividing cell — when destroyed it splits into smaller, quicker fragments.' },
   orbiter:  { name:'Orbiter',  color:'#c06bff', desc:'Circles you at range, loosing spirals of fire. Hard to pin down.' },
   mini:     { name:'Cell',     color:'#a6ff7a', desc:'A fragment shed by a Divider. Small, but swift.' },
-  boss:     { name:'Warden',   color:'#ff2d55', desc:'A great construct of the dark that rises every three minutes. Fells it for a bounty of cinders.' },
+  dasher:   { name:'Lancer',   color:'#ffe14d', desc:'Winds up, then charges in a straight, sudden lunge. Sidestep the dash.' },
+  bomber:   { name:'Igniter',  color:'#ff7a2b', desc:'Bloated with fire — on death it bursts into a ring of bolts. Kill it at range.' },
+  boss:     { name:'Warden',   color:'#ff2d55', desc:'A great construct of the dark that rises now and then. Fells it for a bounty of cinders.' },
+  boss2:    { name:'Devourer', color:'#c23bff', desc:'An elite maw that spits aimed volleys and summons the swarm. Alternates with the Warden.' },
 };
 
 function enemyTypesForTime(min) {
@@ -347,7 +385,9 @@ function enemyTypesForTime(min) {
   if (min >= 0.5) t.push('swarm');
   if (min >= 1.5) t.push('brute');
   if (min >= 2.5) t.push('shooter');
+  if (min >= 3.5) t.push('dasher');
   if (min >= 4)   t.push('splitter');
+  if (min >= 5)   t.push('bomber');
   if (min >= 6)   t.push('orbiter');
   return t;
 }
@@ -360,11 +400,15 @@ function spawnEnemy(type, x, y, scale) {
     splitter: { hp:44, r:18, speed:60, dmg:10, xp:3, kind:'split' },
     orbiter:  { hp:80, r:17, speed:80, dmg:12, xp:6, kind:'orbiter', fireCd:1.6, orbA:rand(0,TAU) },
     mini:     { hp:16, r:10, speed:86, dmg:6,  xp:1, kind:'chase' },
+    dasher:   { hp:40, r:15, speed:56, dmg:14, xp:3, kind:'dash', dashT:rand(.6,1.6) },
+    bomber:   { hp:54, r:18, speed:46, dmg:10, xp:4, kind:'bomb' },
   }[type];
   const e = Object.assign({}, base, {
-    type, x, y, color: ENEMY_INFO[type].color, maxHP: Math.floor(base.hp * scale),
-    touchCd: 0, fireT: (base.fireCd || 0) * Math.random(), hitFlash: 0, knock: 0, aim: 0,
+    type, x, y, color: ENEMY_INFO[type].color,
+    maxHP: Math.floor(base.hp * scale * runMods.enemyHp),
+    touchCd: 0, fireT: (base.fireCd || 0) * rngSrc(), hitFlash: 0, knock: 0, aim: 0,
   });
+  e.speed *= runMods.enemySpeed;
   e.hp = e.maxHP;
   enemies.push(e);
   return e;
@@ -393,16 +437,20 @@ function spawnBoss() {
   const min = runTime / 60;
   const scale = 1 + min * 0.55 + save.ascension * 0.15;
   const a = rand(0, TAU), rad = Math.max(W, H) * 0.55;
+  const elite = bossCount % 2 === 1; // alternate Warden / Devourer
+  bossCount++;
+  const hp = Math.floor((900 + min * 320) * (1 + save.ascension * 0.2) * runMods.enemyHp * (elite ? 1.15 : 1));
   const b = {
-    type:'boss', kind:'boss', x: player.x + Math.cos(a) * rad, y: player.y + Math.sin(a) * rad,
-    r:44, speed:40, dmg:22, color:'#ff5b6a', xp:40,
-    maxHP: Math.floor((900 + min * 320) * (1 + save.ascension * 0.2)),
-    touchCd:0, fireT:1.5, spiralA:0, hitFlash:0, knock:0, isBoss:true,
+    type: elite ? 'boss2' : 'boss', kind: elite ? 'boss2' : 'boss',
+    x: player.x + Math.cos(a) * rad, y: player.y + Math.sin(a) * rad,
+    r:44, speed: (elite ? 34 : 40) * runMods.enemySpeed, dmg:22, color: ENEMY_INFO[elite ? 'boss2' : 'boss'].color,
+    xp: elite ? 55 : 40, maxHP: hp,
+    touchCd:0, fireT:1.5, summonT:4, spiralA:0, hitFlash:0, knock:0, isBoss:true,
   };
   b.hp = b.maxHP;
   enemies.push(b);
   shake = Math.max(shake, 14); sfx.boss();
-  toast('A Warden rises');
+  toast(elite ? 'The Devourer wakes' : 'A Warden rises');
 }
 
 function foeBullet(x, y, ang, spd, dmg) {
@@ -413,25 +461,38 @@ function foeBullet(x, y, ang, spd, dmg) {
    DAMAGE + XP
    ===================================================================== */
 function critRoll(base) {
-  if (Math.random() < player.critChance) return { d: base * player.critMult, crit: true };
+  if (rngSrc() < player.critChance) return { d: base * player.critMult, crit: true };
   return { d: base, crit: false };
 }
 function momentumMult() { return 1 + player.momentumRate * (runTime / 60); }
 
-function hurtEnemy(e, dmg, crit, kbx, kby) {
+function dmgNumber(x, y, val, crit) {
+  if (dmgTexts.length > 44) return;
+  dmgTexts.push({ x: x + rand(-4, 4), y: y - 6, val: Math.round(val), crit, life: crit ? .8 : .6, max: crit ? .8 : .6, vy: crit ? -46 : -34 });
+}
+// popup=true shows a floating damage number (used for direct hits, not DoT ticks)
+function hurtEnemy(e, dmg, crit, kbx, kby, popup) {
   e.hp -= dmg; e.hitFlash = 0.08;
   if (kbx !== undefined && !e.isBoss) { e.x += kbx; e.y += kby; }
+  if (popup) dmgNumber(e.x, e.y, dmg, crit);
+  if (crit) { burst(e.x, e.y, '#fff', 4, 140, .3); hitStop = Math.max(hitStop, 0.03); }
   if (e.hp <= 0) killEnemy(e);
-  else if (crit) burst(e.x, e.y, '#fff', 4, 140, .3);
 }
 function killEnemy(e) {
   e.dead = true;
   killCount++;
+  combo++; comboT = 2.6; if (combo > maxCombo) maxCombo = combo;
   burst(e.x, e.y, e.color, e.isBoss ? 40 : 8, e.isBoss ? 260 : 150, e.isBoss ? .9 : .5);
   // splitter
   if (e.kind === 'split') {
     const scale = 1 + (runTime / 60) * 0.55;
     for (let i = 0; i < 2; i++) spawnEnemy('mini', e.x + rand(-14, 14), e.y + rand(-14, 14), scale * 0.7);
+  }
+  // bomber bursts into a ring of bolts on death
+  if (e.kind === 'bomb') {
+    for (let k = 0; k < 12; k++) foeBullet(e.x, e.y, (k / 12) * TAU, 150, Math.max(6, Math.floor(e.dmg * 0.8)));
+    burst(e.x, e.y, e.color, 16, 220, .6);
+    shake = Math.max(shake, 5);
   }
   // motes
   const val = e.xp || 1;
@@ -439,11 +500,11 @@ function killEnemy(e) {
     for (let i = 0; i < 14; i++) dropMote(e.x + rand(-30, 30), e.y + rand(-30, 30), 4);
     drops.push({ x: e.x, y: e.y, r: 12, type: 'heart', bob: 0 });
     bossKills++;
-    shake = Math.max(shake, 10);
-    toast('Warden felled  ✦');
+    shake = Math.max(shake, 12); hitStop = Math.max(hitStop, 0.09);
+    toast((e.type === 'boss2' ? 'Devourer' : 'Warden') + ' felled  ✦');
   } else {
     dropMote(e.x, e.y, val);
-    if (Math.random() < 0.012) drops.push({ x: e.x, y: e.y, r: 11, type: 'heart', bob: 0 });
+    if (rngSrc() < 0.012) drops.push({ x: e.x, y: e.y, r: 11, type: 'heart', bob: 0 });
   }
 }
 function dropMote(x, y, value) {
@@ -461,9 +522,10 @@ function gainXP(v) {
 }
 function hurtPlayer(dmg) {
   if (player.invuln > 0) return;
-  const real = Math.max(1, dmg - player.armor);
+  const real = Math.max(1, dmg * runMods.dmgTaken - player.armor);
   player.hp -= real; player.invuln = 0.6; player.dmgFlash = 0.35;
-  shake = Math.max(shake, 6); sfx.hit();
+  combo = 0; comboT = 0; // taking a hit breaks the streak
+  shake = Math.max(shake, 6); hitStop = Math.max(hitStop, 0.06); sfx.hit();
   if (player.hp <= 0) {
     if (player.revives > 0) {
       player.revives--; player.hp = player.maxHP * 0.6; player.invuln = 2.5;
@@ -540,7 +602,7 @@ function updateWeapons(dt) {
           const hitSet = new Set(); const jumps = w.jumps(l) + player.extraProjectiles;
           for (let j = 0; j < jumps && cur; j++) {
             const c = critRoll(w.dmg(l) * dm);
-            hurtEnemy(cur, c.d, c.crit);
+            hurtEnemy(cur, c.d, c.crit, undefined, undefined, true);
             hitSet.add(cur);
             fx.push({ type: 'line', x1: from.x, y1: from.y, x2: cur.x, y2: cur.y, life: 0.14, color: '#c9a6ff' });
             from = { x: cur.x, y: cur.y };
@@ -617,10 +679,12 @@ function update(dt) {
   // spawning
   spawnTimer -= dt;
   const min = runTime / 60;
-  const interval = clamp(1.0 - min * 0.09, 0.2, 1.0);
+  const interval = clamp(1.0 - min * 0.09, 0.2, 1.0) / runMods.spawnRate;
   if (spawnTimer <= 0) { spawnTimer = interval; doSpawn(); }
   bossTimer -= dt;
-  if (bossTimer <= 0) { bossTimer = 180; spawnBoss(); }
+  if (bossTimer <= 0) { bossTimer = 180 / runMods.bossRate; spawnBoss(); }
+  // combo decay
+  if (comboT > 0) { comboT -= dt; if (comboT <= 0) combo = 0; }
 
   updateWeapons(dt);
 
@@ -644,10 +708,36 @@ function update(dt) {
       const oa = Math.atan2(ty - e.y, tx - e.x);
       e.x += Math.cos(oa) * e.speed * dt; e.y += Math.sin(oa) * e.speed * dt;
       e.fireT -= dt; if (e.fireT <= 0) { e.fireT = e.fireCd; for (let k = 0; k < 3; k++) foeBullet(e.x, e.y, ang + (k - 1) * 0.4, 140, e.dmg); }
+    } else if (e.kind === 'dash') {
+      // wind-up, then a sudden straight lunge in the locked direction
+      e.aim = e.dashUntil > 0 ? e.dashAng : ang;
+      e.dashT -= dt;
+      if (e.dashUntil > 0) {
+        e.dashUntil -= dt;
+        e.x += Math.cos(e.dashAng) * e.speed * 5.2 * dt; e.y += Math.sin(e.dashAng) * e.speed * 5.2 * dt;
+      } else if (e.dashT <= 0 && d < 420) {
+        e.dashAng = ang; e.dashUntil = 0.34; e.dashT = rand(1.3, 2.2); e.wind = 0.18;
+      } else {
+        const s = e.wind > 0 ? e.speed * 0.3 : e.speed; if (e.wind > 0) e.wind -= dt;
+        e.x += Math.cos(ang) * s * dt; e.y += Math.sin(ang) * s * dt;
+      }
+    } else if (e.kind === 'bomb') {
+      e.x += Math.cos(ang) * e.speed * dt; e.y += Math.sin(ang) * e.speed * dt;
     } else if (e.kind === 'boss') {
       e.x += Math.cos(ang) * e.speed * dt; e.y += Math.sin(ang) * e.speed * dt;
       e.fireT -= dt; e.spiralA += dt * 2.2;
       if (e.fireT <= 0) { e.fireT = 0.28; for (let k = 0; k < 3; k++) foeBullet(e.x, e.y, e.spiralA + (k / 3) * TAU, 165, e.dmg); }
+    } else if (e.kind === 'boss2') {
+      // Devourer: aimed shotgun volleys + periodic swarm summons
+      e.x += Math.cos(ang) * e.speed * dt; e.y += Math.sin(ang) * e.speed * dt;
+      e.fireT -= dt;
+      if (e.fireT <= 0) { e.fireT = 1.5; for (let k = -2; k <= 2; k++) foeBullet(e.x, e.y, ang + k * 0.18, 210, e.dmg); }
+      e.summonT -= dt;
+      if (e.summonT <= 0) {
+        e.summonT = 6;
+        const sc = 1 + (runTime / 60) * 0.55;
+        for (let k = 0; k < 4; k++) { const sa = rand(0, TAU); spawnEnemy('swarm', e.x + Math.cos(sa) * 46, e.y + Math.sin(sa) * 46, sc); }
+      }
     } else {
       e.x += Math.cos(ang) * e.speed * dt; e.y += Math.sin(ang) * e.speed * dt;
     }
@@ -668,7 +758,7 @@ function update(dt) {
       if (s.hit && s.hit.has && s.hit.has(e)) continue;
       if (dist2(s.x, s.y, e.x, e.y) < (s.r + e.r) ** 2) {
         const kb = s.beam ? 0 : 6;
-        hurtEnemy(e, s.dmg, s.crit, Math.cos(Math.atan2(s.vy, s.vx)) * kb, Math.sin(Math.atan2(s.vy, s.vx)) * kb);
+        hurtEnemy(e, s.dmg, s.crit, Math.cos(Math.atan2(s.vy, s.vx)) * kb, Math.sin(Math.atan2(s.vy, s.vx)) * kb, true);
         burst(s.x, s.y, s.color, 2, 90, .25);
         if (s.pierce === 999) { if (s.hit) s.hit.add(e); }
         else if (s.pierce > 0) { s.pierce--; }
@@ -712,11 +802,13 @@ function update(dt) {
   }
   drops = drops.filter(d => !d.dead);
 
-  // particles / fx
+  // particles / fx / damage numbers
   for (const p of parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.92; p.vy *= 0.92; p.life -= dt; }
   parts = parts.filter(p => p.life > 0);
   for (const f of fx) f.life -= dt;
   fx = fx.filter(f => f.life > 0);
+  for (const d of dmgTexts) { d.y += d.vy * dt; d.vy *= 0.9; d.life -= dt; }
+  dmgTexts = dmgTexts.filter(d => d.life > 0);
 
   shake = Math.max(0, shake - dt * 24);
 }
@@ -832,6 +924,18 @@ function draw() {
 
     // player (the ember)
     drawPlayer();
+
+    // floating damage numbers
+    if (dmgTexts.length) {
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      for (const d of dmgTexts) {
+        ctx.globalAlpha = clamp(d.life / d.max, 0, 1);
+        ctx.font = 'bold ' + (d.crit ? 20 : 14) + 'px "Trebuchet MS", sans-serif';
+        ctx.fillStyle = d.crit ? '#fff2c0' : '#ffe9c0';
+        ctx.fillText(d.crit ? d.val + '!' : d.val, d.x, d.y);
+      }
+      ctx.globalAlpha = 1; ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+    }
   }
 
   ctx.restore();
@@ -928,7 +1032,19 @@ function neonStyle(g, color, flash, lw) {
 function drawEnemyShape(g, e) {
   const r = e.r, t = runTime, color = e.color, flash = e.hitFlash > 0;
   g.lineJoin = 'round';
-  if (e.isBoss) {
+  if (e.isBoss && e.type === 'boss2') { // Devourer — a toothed maw
+    // outer ring
+    g.strokeStyle = flash ? '#fff' : color; g.lineWidth = 4; g.beginPath(); g.arc(0, 0, r * 0.98, 0, TAU); g.stroke();
+    // inward-pointing teeth
+    g.fillStyle = flash ? '#fff' : color;
+    for (let i = 0; i < 10; i++) { g.save(); g.rotate(-t * 0.5 + i / 10 * TAU); g.beginPath(); g.moveTo(r * 0.98, -r * 0.12); g.lineTo(r * 0.6, 0); g.lineTo(r * 0.98, r * 0.12); g.closePath(); g.fill(); g.restore(); }
+    // counter-rotating inner ring + pulsing eye
+    g.strokeStyle = flash ? '#fff' : rgba(color, 0.8); g.lineWidth = 3; poly(g, 6, r * 0.5, t * 0.8); g.stroke();
+    const pl = 0.24 + Math.sin(t * 4) * 0.06;
+    g.fillStyle = '#fff'; g.beginPath(); g.arc(0, 0, r * pl, 0, TAU); g.fill();
+    return;
+  }
+  if (e.isBoss) { // Warden — spiked construct with a rotating eye
     neonStyle(g, color, flash, 3); star(g, 8, r * 1.15, r * 0.74, t * 0.5); g.fill(); g.stroke();
     g.strokeStyle = flash ? '#fff' : color; g.lineWidth = 3; g.beginPath(); g.arc(0, 0, r * 0.62, 0, TAU); g.stroke();
     g.fillStyle = flash ? '#fff' : rgba(color, 0.5); poly(g, 3, r * 0.42, -t * 0.9); g.fill();
@@ -936,6 +1052,22 @@ function drawEnemyShape(g, e) {
     return;
   }
   switch (e.type) {
+    case 'dasher': { // dart that points where it will lunge; glows while charging
+      const aim = e.aim || 0, charging = e.dashUntil > 0;
+      g.save(); g.rotate(aim);
+      if (charging) { g.strokeStyle = rgba(color, .5); g.lineWidth = r * 0.9; g.lineCap = 'round'; g.beginPath(); g.moveTo(-r * 1.4, 0); g.lineTo(-r * 0.3, 0); g.stroke(); }
+      neonStyle(g, color, flash || charging, 2);
+      g.beginPath(); g.moveTo(r * 1.35, 0); g.lineTo(-r * 0.7, r * 0.8); g.lineTo(-r * 0.2, 0); g.lineTo(-r * 0.7, -r * 0.8); g.closePath(); g.fill(); g.stroke();
+      g.restore();
+      break;
+    }
+    case 'bomber': { // volatile mine — spiked shell with a blinking core
+      neonStyle(g, color, flash, 2); star(g, 8, r, r * 0.66, t * 0.6); g.fill(); g.stroke();
+      const blink = (Math.sin(t * 7) + 1) / 2;
+      g.fillStyle = blink > 0.5 ? '#fff' : (flash ? '#fff' : color);
+      g.beginPath(); g.arc(0, 0, r * 0.3, 0, TAU); g.fill();
+      break;
+    }
     case 'drifter': // husk: circle with an eye-slit
       neonStyle(g, color, flash, 2); g.beginPath(); g.arc(0, 0, r, 0, TAU); g.fill(); g.stroke();
       g.strokeStyle = flash ? '#fff' : color; g.lineWidth = 2.4; g.beginPath(); g.moveTo(-r * 0.5, 0); g.lineTo(r * 0.5, 0); g.stroke();
@@ -993,7 +1125,7 @@ function drawHeart(x, y, s) {
 
 /* ---- Codex portraits (reuse the live art on menu canvases) ---- */
 function drawEnemyPortrait(g, type, x, y, r) {
-  const e = { type, r, color: ENEMY_INFO[type].color, hitFlash: 0, orbA: 0.6, aim: -0.5, isBoss: type === 'boss' };
+  const e = { type, r, color: ENEMY_INFO[type].color, hitFlash: 0, orbA: 0.6, aim: -0.5, dashUntil: 0, dashAng: -0.5, isBoss: type.startsWith('boss') };
   g.save(); g.translate(x, y);
   if (e.isBoss) { g.fillStyle = rgba(e.color, 0.14); g.beginPath(); g.arc(0, 0, r * 1.55, 0, TAU); g.fill(); }
   drawEnemyShape(g, e);
@@ -1046,10 +1178,13 @@ function updateHUD() {
   const hpp = clamp(player.hp / player.maxHP, 0, 1);
   el('hpfill').style.width = hpp * 100 + '%';
   el('hptext').textContent = Math.ceil(Math.max(0, player.hp)) + ' / ' + player.maxHP;
+  const cel = el('combo');
+  if (combo >= 3) { cel.classList.remove('hidden'); cel.textContent = '✦ ' + combo + ' streak'; cel.style.opacity = clamp(comboT / 2.6, 0.3, 1); }
+  else cel.classList.add('hidden');
 }
 function computeCinders() {
-  const base = runTime * 0.6 + killCount * 0.45 + player.level * 5 + bossKills * 45;
-  return Math.floor(base * player.greedMult);
+  const base = runTime * 0.6 + killCount * 0.45 + player.level * 5 + bossKills * 45 + maxCombo * 2;
+  return Math.floor(base * player.greedMult * runMods.cinderMult);
 }
 
 /* =====================================================================
@@ -1060,7 +1195,11 @@ function frame() {
   const t = now();
   let dt = (t - lastT) / 1000; lastT = t;
   dt = Math.min(dt, 0.05); // clamp big jumps
-  if (state === 'playing') { update(dt); updateHUD(); }
+  if (state === 'playing') {
+    if (hitStop > 0) hitStop -= dt; // brief freeze for impact
+    else update(dt);
+    updateHUD();
+  }
   draw();
   requestAnimationFrame(frame);
 }
@@ -1107,10 +1246,14 @@ function openLevelUp() {
     const v = choiceView(o);
     const d = document.createElement('button');
     d.className = 'up-card rar-' + v.rar;
-    d.innerHTML = `<div class="uc-ic">${v.icon}</div><div class="uc-body">
+    const icHtml = o.kind === 'weapon'
+      ? `<canvas class="uc-canvas" width="80" height="80"></canvas>`
+      : `<div class="uc-ic">${v.icon}</div>`;
+    d.innerHTML = `${icHtml}<div class="uc-body">
       <div class="uc-name">${v.name}${v.tag ? `<span class="lvltag">${v.tag}</span>` : ''}</div>
       <div class="uc-desc">${v.desc}</div>
       <div class="uc-rar">${v.rar === 'new' ? 'New weapon' : v.rar}</div></div>`;
+    if (o.kind === 'weapon') { const cg = d.querySelector('.uc-canvas').getContext('2d'); cg.setTransform(2, 0, 0, 2, 0, 0); drawWeaponPortrait(cg, o.id, 20, 20, 14); }
     d.onclick = () => applyChoice(o);
     box.appendChild(d);
   });
@@ -1148,15 +1291,21 @@ function endRun() {
   if (player.level > save.best.level) save.best.level = player.level;
   if (killCount > save.best.kills) save.best.kills = killCount;
   if (save.totals.kills >= 2000) grantAchievement('slayer');
+  // daily best (score = cinders earned this daily run)
+  if (dailyMode) {
+    const key = todayKey();
+    if (save.dailyBest.key !== key || earned > save.dailyBest.score) save.dailyBest = { key, score: earned, time: Math.floor(runTime) };
+  }
   persist();
   showGameOver(earned);
   setState('over');
+  rngSrc = Math.random; // restore system RNG for menus
 }
 
 /* =====================================================================
    SCREENS / UI
    ===================================================================== */
-const screens = { menu:'screen-menu', forge:'screen-forge', embers:'screen-embers', codex:'screen-codex', how:'screen-how', levelup:'screen-levelup', pause:'screen-pause', over:'screen-over' };
+const screens = { menu:'screen-menu', forge:'screen-forge', embers:'screen-embers', codex:'screen-codex', trials:'screen-trials', how:'screen-how', levelup:'screen-levelup', pause:'screen-pause', over:'screen-over' };
 function setState(s) {
   state = s;
   Object.values(screens).forEach(id => el(id).classList.add('hidden'));
@@ -1173,11 +1322,32 @@ function toast(msg) {
 
 function renderMenuStats() {
   const s = save;
+  const activeTrials = TRIALS.filter(t => s.trials && s.trials[t.id]).length;
+  const dailyToday = s.dailyBest && s.dailyBest.key === todayKey();
   el('menu-stats').innerHTML =
     `<div>Best: <b>${fmtTime(s.best.time)}</b></div>
      <div>Cinders: <b>${s.cinders}</b></div>
      <div>Runs: <b>${s.totals.runs}</b></div>
-     ${s.ascension > 0 ? `<div>Ascension: <b>${s.ascension}</b></div>` : ''}`;
+     ${s.ascension > 0 ? `<div>Ascension: <b>${s.ascension}</b></div>` : ''}
+     ${activeTrials > 0 ? `<div>Trials: <b>${activeTrials} (+${Math.round((trialCinderMult() - 1) * 100)}%)</b></div>` : ''}
+     ${dailyToday ? `<div>Daily best: <b>✦ ${s.dailyBest.score}</b></div>` : ''}`;
+}
+
+function renderTrials() {
+  el('trials-bonus').textContent = '+' + Math.round((trialCinderMult() - 1) * 100) + '%';
+  const list = el('trials-list'); list.innerHTML = '';
+  TRIALS.forEach(t => {
+    const on = !!(save.trials && save.trials[t.id]);
+    const div = document.createElement('div');
+    div.className = 'card-item ember-card' + (on ? ' selected' : '');
+    div.innerHTML = `
+      <div class="ci-head"><div class="ci-name"><span class="ic">${t.icon}</span>${t.name}</div>
+        <div class="ci-rank">+${Math.round(t.bonus * 100)}% ✦</div></div>
+      <div class="ci-desc">${t.desc}</div>
+      <span class="ci-tag ${on ? 'tag-selected' : 'tag-locked'}">${on ? 'Active — tap to remove' : 'Inactive — tap to add'}</span>`;
+    div.onclick = () => { save.trials[t.id] = !on; persist(); sfx.pick(); renderTrials(); };
+    list.appendChild(div);
+  });
 }
 
 function renderForge() {
@@ -1260,13 +1430,16 @@ function renderEmbers() {
 
 function showGameOver(earned) {
   const won = hasWon;
-  el('over-title').textContent = won ? 'You held back the dark' : 'The ember fades';
-  el('over-title').classList.toggle('win', won);
+  el('over-title').textContent = dailyMode ? 'Daily run complete' : (won ? 'You held back the dark' : 'The ember fades');
+  el('over-title').classList.toggle('win', won || dailyMode);
+  const cm = runMods.cinderMult;
   el('over-summary').innerHTML = `
     <div class="rs-row"><span>Survived</span><b>${fmtTime(runTime)}</b></div>
     <div class="rs-row"><span>Level</span><b>${player.level}</b></div>
     <div class="rs-row"><span>Kills</span><b>${killCount}</b></div>
-    <div class="rs-row"><span>Wardens felled</span><b>${bossKills}</b></div>
+    <div class="rs-row"><span>Best streak</span><b>✦ ${maxCombo}</b></div>
+    <div class="rs-row"><span>Bosses felled</span><b>${bossKills}</b></div>
+    ${cm > 1 ? `<div class="rs-row"><span>Trial bonus</span><b>+${Math.round((cm - 1) * 100)}%</b></div>` : ''}
     <div class="rs-row"><span>Cinders earned</span><b>✦ ${earned}</b></div>
     <div class="rs-row"><span>Total cinders</span><b>✦ ${save.cinders}</b></div>`;
   const uw = el('over-unlocks'); uw.innerHTML = '';
@@ -1293,14 +1466,15 @@ function codexCard(kind, id) {
     <div class="ci-desc">${desc}</div>`;
   const pg = div.querySelector('.portrait').getContext('2d');
   pg.setTransform(2, 0, 0, 2, 0, 0);
-  if (kind === 'foe') drawEnemyPortrait(pg, id, 24, 24, id === 'boss' ? 15 : 14);
+  if (kind === 'foe') drawEnemyPortrait(pg, id, 24, 24, id.startsWith('boss') ? 15 : 14);
   else drawWeaponPortrait(pg, id, 24, 24, 15);
   return div;
 }
 let codexTimer = null;
+const CODEX_FOES = ['drifter', 'swarm', 'brute', 'shooter', 'dasher', 'splitter', 'bomber', 'orbiter', 'boss', 'boss2'];
 function renderCodex() {
   const foes = el('codex-foes'); foes.innerHTML = '';
-  ['drifter', 'swarm', 'brute', 'shooter', 'splitter', 'orbiter', 'boss'].forEach(t => foes.appendChild(codexCard('foe', t)));
+  CODEX_FOES.forEach(t => foes.appendChild(codexCard('foe', t)));
   const arse = el('codex-arsenal'); arse.innerHTML = '';
   WEAPONS.forEach(w => arse.appendChild(codexCard('weapon', w.id)));
   // gently animate the codex portraits while the screen is open
@@ -1309,9 +1483,8 @@ function renderCodex() {
     if (state !== 'codex') { clearInterval(codexTimer); return; }
     document.querySelectorAll('#screen-codex .portrait').forEach((cv, i) => {
       const g = cv.getContext('2d'); g.setTransform(2, 0, 0, 2, 0, 0); g.clearRect(0, 0, 48, 48);
-      const foeIds = ['drifter', 'swarm', 'brute', 'shooter', 'splitter', 'orbiter', 'boss'];
-      if (i < foeIds.length) drawEnemyPortrait(g, foeIds[i], 24, 24, foeIds[i] === 'boss' ? 15 : 14);
-      else drawWeaponPortrait(g, WEAPONS[i - foeIds.length].id, 24, 24, 15);
+      if (i < CODEX_FOES.length) drawEnemyPortrait(g, CODEX_FOES[i], 24, 24, CODEX_FOES[i].startsWith('boss') ? 15 : 14);
+      else drawWeaponPortrait(g, WEAPONS[i - CODEX_FOES.length].id, 24, 24, 15);
     });
   }, 90);
 }
@@ -1327,9 +1500,11 @@ function setMuted(v) {
 }
 
 /* --------------------------------------------------------------- wiring */
-el('btn-play').onclick = () => { actx(); if (!muted) music.start(); startRun(); };
+el('btn-play').onclick = () => { actx(); if (!muted) music.start(); dailyMode = false; startRun(); };
+el('btn-daily').onclick = () => { actx(); if (!muted) music.start(); dailyMode = true; toast('Daily seed — same for everyone today'); startRun(); };
 el('btn-forge').onclick = () => { renderForge(); setState('forge'); };
 el('btn-embers').onclick = () => { renderEmbers(); setState('embers'); };
+el('btn-trials').onclick = () => { renderTrials(); setState('trials'); };
 el('btn-codex').onclick = () => { renderCodex(); setState('codex'); };
 el('btn-how').onclick = () => setState('how');
 document.querySelectorAll('[data-back]').forEach(b => b.onclick = () => { renderMenuStats(); setState('menu'); });

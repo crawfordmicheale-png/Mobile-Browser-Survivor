@@ -21,6 +21,7 @@
     </div>
     <div id="xpbar"><div id="xpfill"></div><span id="lvl">Lv 1</span></div>
     <div id="hpbar"><div id="hpfill"></div><span id="hptext"></span></div>
+    <div id="combo" class="hidden">✦ 0 streak</div>
     <button id="pause-btn" aria-label="Pause">II</button>
   </div>
 
@@ -30,14 +31,27 @@
     <p class="tagline">The dark closes in. Burn, or fade.</p>
     <div class="menu-buttons">
       <button class="btn primary" id="btn-play">Descend</button>
+      <button class="btn" id="btn-daily">Daily Trial</button>
       <button class="btn" id="btn-forge">The Forge</button>
       <button class="btn" id="btn-embers">Embers</button>
+      <button class="btn" id="btn-trials">Trials</button>
       <button class="btn" id="btn-codex">Codex</button>
       <button class="btn ghost" id="btn-how">How to play</button>
     </div>
     <div class="menu-stats" id="menu-stats"></div>
     <button id="mute-btn" aria-label="Toggle sound">🔊</button>
     <div class="credit">A tiny game about a small light.</div>
+  </div>
+
+  <!-- Trials (optional run modifiers) -->
+  <div id="screen-trials" class="screen hidden panel">
+    <div class="panel-head">
+      <button class="btn back" data-back>‹ Back</button>
+      <h2>Trials</h2>
+      <div class="bank" id="trials-bonus">+0%</div>
+    </div>
+    <p class="panel-sub">Optional curses for your next descent. Each makes the run harder and raises the cinders it pays out. Daily runs ignore trials.</p>
+    <div id="trials-list" class="grid-list"></div>
   </div>
 
   <!-- Codex (bestiary + arsenal) -->
