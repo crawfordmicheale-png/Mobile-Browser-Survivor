@@ -63,6 +63,14 @@ Field (lingering ground). Each scales through 8 levels; carry up to 6 at once.
 
 ## Design notes
 
+- **Hand-crafted neon art, drawn in code.** Every Ember and enemy is a distinct
+  canvas-drawn silhouette in a shared neon-cyberpunk treatment (glass-tinted
+  fill + bright outline + a signature accent) — no image assets. Embers: Spark
+  (four-point star), Nova (rayed sun), Warden (segmented shield-hex), Hunter
+  (arrowhead that turns to face movement), Storm (lightning ring), Glutton
+  (pulsing maw). Enemies each read at a glance: husk, shard, armored hex, aiming
+  turret, dividing cell, orbiting ring, and a spiked Warden boss with a rotating
+  eye. Character portraits render the same art live in the Embers menu.
 - Rendering is kept cheap for phones: flat shapes with sparing glow, capped
   particle/entity counts, DPR-aware canvas, and a `dt`-clamped fixed-ish loop.
 - Menus are DOM overlays (crisp, touch-friendly, responsive); only the action is
