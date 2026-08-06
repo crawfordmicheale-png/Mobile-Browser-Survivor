@@ -69,11 +69,25 @@ new deploy always shows up when you're online (no manual cache-clearing).
 - **Trials** — persistent per-run modifier toggles (curses) that trade difficulty
   for a cinder-gain bonus.
 
+## Weapon evolutions
+
+Take a weapon to its max level **and** pick up its matching passive, and a special
+**Evolution** card appears at your next level-up — upgrading the weapon into a
+far stronger, white-gold form (e.g. Spark → **Starfall**, Nova → **Supernova**,
+Lance → **Sunlance**). Each weapon has one evolution; the Codex lists the pairings.
+
 ## Game feel
 
 Combat is juiced: brief **hit-stop** on crits, boss kills, and taking damage;
-floating **damage numbers** on direct hits; a **kill-streak combo** that pays out
-bonus cinders; and screen shake, particles, and a low-life vignette.
+**slow-motion and a screen flash** when a boss falls; floating **damage numbers**
+on direct hits and **+cinder / streak popups**; comet **trails** on the XP motes
+you vacuum up; a **kill-streak combo** that pays bonus cinders; plus screen shake,
+particles, and a low-life vignette.
+
+## Codex tracking
+
+The Codex bestiary fills in as you play — foes you haven't met yet show as `???`
+until first encountered, with a running **seen count**.
 
 ## Weapons (in-run)
 
