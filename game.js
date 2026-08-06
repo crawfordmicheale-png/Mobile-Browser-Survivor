@@ -95,7 +95,7 @@ function freshSave() {
     best: { time:0, level:0, kills:0 },
     totals: { runs:0, kills:0, time:0, cinders:0 },
     achievements: {},
-    trials: {}, dailyBest: { key:'', score:0, time:0 },
+    trials: {}, dailyBest: { key:'', score:0, time:0 }, seen: {},
   };
 }
 let save;
@@ -112,6 +112,7 @@ function load() {
     save.achievements = save.achievements || {};
     save.trials = save.trials || {};
     save.dailyBest = Object.assign(f.dailyBest, save.dailyBest);
+    save.seen = save.seen || {};
   } catch (e) { save = freshSave(); }
 }
 function persist() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) {} }
@@ -181,6 +182,18 @@ const PASSIVES = [
 ];
 const passiveById = id => PASSIVES.find(p => p.id === id);
 
+// Evolutions — a maxed weapon plus a matching passive unlocks an upgraded form.
+// The evolved form keeps the weapon's behaviour but hits far harder, in white-gold.
+const EVOLUTIONS = {
+  spark: { req:'p_damage', name:'Starfall',  color:'#fff2c0', desc:'The bolt splinters — piercing, relentless.' },
+  nova:  { req:'p_area',   name:'Supernova', color:'#ffd479', desc:'The burst swells into a devastating ring.' },
+  orbit: { req:'p_hp',     name:'Aegis',     color:'#fff2c0', desc:'The flames blaze wider and fiercer.' },
+  beam:  { req:'p_crit',   name:'Sunlance',  color:'#e8f4ff', desc:'A blinding lance that shears through all.' },
+  chain: { req:'p_fire',   name:'Tempest',   color:'#e8d0ff', desc:'The arc forks endlessly through the dark.' },
+  aura:  { req:'p_regen',  name:'Inferno',   color:'#ffb36a', desc:'The field becomes an all-consuming pyre.' },
+  pyre:  { req:'p_pickup', name:'Wildfire',  color:'#ff9a3c', desc:'The ground erupts into a lasting blaze.' },
+};
+
 /* =====================================================================
    RUN STATE
    ===================================================================== */
@@ -193,10 +206,11 @@ let shake = 0, levelQueue = 0, runCinders = 0, hasWon = false;
 let runUnlocks = [];
 let lastTimerSec = -1;
 // juice + run-config state
-let dmgTexts = [];
-let hitStop = 0;
+let dmgTexts = [], popups = [];
+let hitStop = 0, slowmo = 0, flash = 0;
 let combo = 0, comboT = 0, maxCombo = 0;
 let dailyMode = false;
+let seenRun = null;
 const defaultMods = () => ({ spawnRate:1, enemySpeed:1, enemyHp:1, bossRate:1, dmgTaken:1, cinderMult:1 });
 let runMods = defaultMods();
 
@@ -223,7 +237,7 @@ function baseStats() {
     armor:0, regen:0, extraProjectiles:0, areaMult:1, projSpeedMult:1,
     luck:0, momentumRate:0, revives:0, headStart:0,
     invuln:0, level:1, xp:0, xpNext:6, rerolls:2, dmgFlash:0, face:0,
-    weapons:{},
+    weapons:{}, passives:{},
   };
 }
 function xpNeeded(level) { return Math.floor(4 + (level - 1) * 4 + Math.pow(level, 1.7)); }
@@ -254,11 +268,11 @@ function startRun() {
   const w = weaponById(ember.weapon);
   player.weapons[ember.weapon] = { level: Math.min(w.maxLevel, startLvl), cd: 0, angle: 0 };
 
-  enemies = []; shots = []; foeShots = []; motes = []; zones = []; parts = []; fx = []; drops = []; dmgTexts = [];
+  enemies = []; shots = []; foeShots = []; motes = []; zones = []; parts = []; fx = []; drops = []; dmgTexts = []; popups = [];
   cam.x = 0; cam.y = 0;
   runTime = 0; spawnTimer = .3; bossTimer = 180 / runMods.bossRate; killCount = 0; bossKills = 0; bossCount = 0;
   shake = 0; levelQueue = 0; runCinders = 0; hasWon = false; runUnlocks = []; lastTimerSec = -1;
-  hitStop = 0; combo = 0; comboT = 0; maxCombo = 0;
+  hitStop = 0; slowmo = 0; flash = 0; combo = 0; comboT = 0; maxCombo = 0; seenRun = {};
   // opening cluster so the swarm is on you quickly
   const r0 = Math.min(W, H) * 0.42 + 30;
   for (let i = 0; i < 5; i++) { const a = (i / 5) * TAU + rand(-.3, .3); spawnEnemy('drifter', player.x + Math.cos(a) * r0, player.y + Math.sin(a) * r0, 1); }
@@ -410,6 +424,7 @@ function spawnEnemy(type, x, y, scale) {
   });
   e.speed *= runMods.enemySpeed;
   e.hp = e.maxHP;
+  if (seenRun && type !== 'mini') seenRun[type] = true;
   enemies.push(e);
   return e;
 }
@@ -448,6 +463,7 @@ function spawnBoss() {
     touchCd:0, fireT:1.5, summonT:4, spiralA:0, hitFlash:0, knock:0, isBoss:true,
   };
   b.hp = b.maxHP;
+  if (seenRun) seenRun[b.type] = true;
   enemies.push(b);
   shake = Math.max(shake, 14); sfx.boss();
   toast(elite ? 'The Devourer wakes' : 'A Warden rises');
@@ -500,15 +516,24 @@ function killEnemy(e) {
     for (let i = 0; i < 14; i++) dropMote(e.x + rand(-30, 30), e.y + rand(-30, 30), 4);
     drops.push({ x: e.x, y: e.y, r: 12, type: 'heart', bob: 0 });
     bossKills++;
-    shake = Math.max(shake, 12); hitStop = Math.max(hitStop, 0.09);
+    // big juice: screen flash, slow-mo, a cinder popup
+    shake = Math.max(shake, 14); hitStop = Math.max(hitStop, 0.1); slowmo = Math.max(slowmo, 0.7); flash = 1;
+    const bounty = Math.floor(45 * player.greedMult * runMods.cinderMult);
+    popup(e.x, e.y - e.r, '+' + bounty + ' ✦', '#ffd479', 1.2);
     toast((e.type === 'boss2' ? 'Devourer' : 'Warden') + ' felled  ✦');
   } else {
     dropMote(e.x, e.y, val);
     if (rngSrc() < 0.012) drops.push({ x: e.x, y: e.y, r: 11, type: 'heart', bob: 0 });
   }
+  // streak milestone flourish
+  if (combo > 0 && combo % 25 === 0) popup(player.x, player.y - 30, combo + ' streak!', '#ffd479', 1);
+}
+function popup(x, y, text, color, big) {
+  if (popups.length > 12) return;
+  popups.push({ x, y, text, color, life: 1.1, max: 1.1, vy: -30, big: big || 1 });
 }
 function dropMote(x, y, value) {
-  motes.push({ x, y, value, r: value >= 4 ? 6 : 4, big: value >= 4, vx: rand(-30, 30), vy: rand(-30, 30), life: 26 });
+  motes.push({ x, y, value, r: value >= 4 ? 6 : 4, big: value >= 4, vx: rand(-30, 30), vy: rand(-30, 30), life: 26, px: x, py: y });
 }
 function gainXP(v) {
   player.xp += v * player.xpMult;
@@ -552,43 +577,43 @@ function spawnShot(x, y, ang, spd, dmg, r, pierce, color, crit, kind) {
 function updateWeapons(dt) {
   const dm = player.damageMult * momentumMult();
   for (const id in player.weapons) {
-    const st = player.weapons[id]; const w = weaponById(id); const l = st.level;
+    const st = player.weapons[id]; const w = weaponById(id); const l = st.level; const evo = !!st.evolved;
     st.cd -= dt;
     if (id === 'spark') {
       if (st.cd <= 0) {
         const t = nearestEnemy(player.x, player.y);
         if (t) {
-          st.cd = w.cd(l) / player.fireRateMult;
-          const n = w.count(l) + player.extraProjectiles;
+          st.cd = w.cd(l) / player.fireRateMult * (evo ? 0.72 : 1);
+          const n = w.count(l) + player.extraProjectiles + (evo ? 1 : 0);
           const baseA = Math.atan2(t.y - player.y, t.x - player.x);
           for (let i = 0; i < n; i++) {
             const off = (i - (n - 1) / 2) * 0.12;
-            const c = critRoll(w.dmg(l) * dm);
-            spawnShot(player.x, player.y, baseA + off, w.speed * player.projSpeedMult, c.d, 6 * player.areaMult, w.pierce(l), '#ffd479', c.crit, 'spark');
+            const c = critRoll(w.dmg(l) * dm * (evo ? 1.7 : 1));
+            spawnShot(player.x, player.y, baseA + off, w.speed * player.projSpeedMult, c.d, 6 * player.areaMult * (evo ? 1.3 : 1), evo ? 2 : w.pierce(l), evo ? EVOLUTIONS.spark.color : '#ffd479', c.crit, 'spark');
           }
         }
       }
     } else if (id === 'nova') {
       if (st.cd <= 0) {
-        st.cd = w.cd(l) / player.fireRateMult;
-        const n = w.count(l) + player.extraProjectiles;
+        st.cd = w.cd(l) / player.fireRateMult * (evo ? 0.85 : 1);
+        const n = w.count(l) + player.extraProjectiles + (evo ? 4 : 0);
         for (let i = 0; i < n; i++) {
           const a = (i / n) * TAU;
-          const c = critRoll(w.dmg(l) * dm);
-          spawnShot(player.x, player.y, a, w.speed * player.projSpeedMult, c.d, 6 * player.areaMult, 0, '#ff9a3c', c.crit, 'nova');
+          const c = critRoll(w.dmg(l) * dm * (evo ? 1.6 : 1));
+          spawnShot(player.x, player.y, a, w.speed * player.projSpeedMult, c.d, 6 * player.areaMult * (evo ? 1.25 : 1), evo ? 1 : 0, evo ? EVOLUTIONS.nova.color : '#ff9a3c', c.crit, 'nova');
         }
       }
     } else if (id === 'beam') {
       if (st.cd <= 0) {
         const t = nearestEnemy(player.x, player.y);
         if (t) {
-          st.cd = w.cd(l) / player.fireRateMult;
-          const n = w.count(l) + player.extraProjectiles;
+          st.cd = w.cd(l) / player.fireRateMult * (evo ? 0.8 : 1);
+          const n = w.count(l) + player.extraProjectiles + (evo ? 1 : 0);
           const baseA = Math.atan2(t.y - player.y, t.x - player.x);
           for (let i = 0; i < n; i++) {
             const off = (i - (n - 1) / 2) * 0.16;
-            const c = critRoll(w.dmg(l) * dm);
-            const s = { x: player.x, y: player.y, vx: Math.cos(baseA + off) * w.speed * player.projSpeedMult, vy: Math.sin(baseA + off) * w.speed * player.projSpeedMult, dmg: c.d, r: 5 * player.areaMult, pierce: 999, color: '#8ad0ff', crit: c.crit, life: 1.1, hit: new Set(), beam: true };
+            const c = critRoll(w.dmg(l) * dm * (evo ? 1.8 : 1));
+            const s = { x: player.x, y: player.y, vx: Math.cos(baseA + off) * w.speed * player.projSpeedMult, vy: Math.sin(baseA + off) * w.speed * player.projSpeedMult, dmg: c.d, r: 5 * player.areaMult * (evo ? 1.5 : 1), pierce: 999, color: evo ? EVOLUTIONS.beam.color : '#8ad0ff', crit: c.crit, life: 1.1, hit: new Set(), beam: true };
             shots.push(s);
           }
         }
@@ -597,14 +622,14 @@ function updateWeapons(dt) {
       if (st.cd <= 0) {
         const t = nearestEnemy(player.x, player.y, 360);
         if (t) {
-          st.cd = w.cd(l) / player.fireRateMult;
+          st.cd = w.cd(l) / player.fireRateMult * (evo ? 0.8 : 1);
           let from = { x: player.x, y: player.y }, cur = t;
-          const hitSet = new Set(); const jumps = w.jumps(l) + player.extraProjectiles;
+          const hitSet = new Set(); const jumps = w.jumps(l) + player.extraProjectiles + (evo ? 3 : 0);
           for (let j = 0; j < jumps && cur; j++) {
-            const c = critRoll(w.dmg(l) * dm);
+            const c = critRoll(w.dmg(l) * dm * (evo ? 1.7 : 1));
             hurtEnemy(cur, c.d, c.crit, undefined, undefined, true);
             hitSet.add(cur);
-            fx.push({ type: 'line', x1: from.x, y1: from.y, x2: cur.x, y2: cur.y, life: 0.14, color: '#c9a6ff' });
+            fx.push({ type: 'line', x1: from.x, y1: from.y, x2: cur.x, y2: cur.y, life: 0.14, color: evo ? EVOLUTIONS.chain.color : '#c9a6ff' });
             from = { x: cur.x, y: cur.y };
             // next nearest unhit within range
             let nx = null, nd = w.range * w.range;
@@ -615,8 +640,8 @@ function updateWeapons(dt) {
       }
     } else if (id === 'pyre') {
       if (st.cd <= 0) {
-        st.cd = w.cd(l) / player.fireRateMult;
-        zones.push({ x: player.x, y: player.y, r: w.radius(l) * player.areaMult, dps: w.dps(l) * dm, life: w.life, max: w.life, color: '#ff6a2b' });
+        st.cd = w.cd(l) / player.fireRateMult * (evo ? 0.8 : 1);
+        zones.push({ x: player.x, y: player.y, r: w.radius(l) * player.areaMult * (evo ? 1.3 : 1), dps: w.dps(l) * dm * (evo ? 1.8 : 1), life: w.life, max: w.life, color: evo ? EVOLUTIONS.pyre.color : '#ff6a2b' });
       }
     }
     // 'orbit' and 'aura' handled continuously below
@@ -624,11 +649,11 @@ function updateWeapons(dt) {
   // ORBIT (contact DoT)
   const orb = player.weapons['orbit'];
   if (orb) {
-    const w = weaponById('orbit'), l = orb.level;
+    const w = weaponById('orbit'), l = orb.level, evo = !!orb.evolved;
     orb.angle = (orb.angle || 0) + dt * 2.6;
-    const n = w.orbs(l) + player.extraProjectiles, R = w.radius(l) * player.areaMult, orbR = w.orbR * player.areaMult;
-    const dps = w.dps(l) * dm;
-    orb._pts = [];
+    const n = w.orbs(l) + player.extraProjectiles + (evo ? 2 : 0), R = w.radius(l) * player.areaMult * (evo ? 1.2 : 1), orbR = w.orbR * player.areaMult * (evo ? 1.25 : 1);
+    const dps = w.dps(l) * dm * (evo ? 1.8 : 1);
+    orb._evo = evo; orb._pts = [];
     for (let i = 0; i < n; i++) {
       const a = orb.angle + (i / n) * TAU;
       const ox = player.x + Math.cos(a) * R, oy = player.y + Math.sin(a) * R;
@@ -639,8 +664,8 @@ function updateWeapons(dt) {
   // AURA (field DoT)
   const au = player.weapons['aura'];
   if (au) {
-    const w = weaponById('aura'), l = au.level;
-    const R = w.radius(l) * player.areaMult, dps = w.dps(l) * dm;
+    const w = weaponById('aura'), l = au.level, evo = !!au.evolved;
+    const R = w.radius(l) * player.areaMult * (evo ? 1.3 : 1), dps = w.dps(l) * dm * (evo ? 1.9 : 1);
     au._r = R;
     for (const e of enemies) { if (dist2(player.x, player.y, e.x, e.y) < (R + e.r) ** 2) hurtEnemy(e, dps * dt, false); }
   }
@@ -778,7 +803,7 @@ function update(dt) {
   // motes
   const pr2 = player.pickupRadius * player.pickupRadius;
   for (const m of motes) {
-    m.life -= dt;
+    m.life -= dt; m.px = m.x; m.py = m.y;
     const d = dist2(m.x, m.y, player.x, player.y);
     if (d < pr2 || m.pull) {
       m.pull = true;
@@ -809,6 +834,8 @@ function update(dt) {
   fx = fx.filter(f => f.life > 0);
   for (const d of dmgTexts) { d.y += d.vy * dt; d.vy *= 0.9; d.life -= dt; }
   dmgTexts = dmgTexts.filter(d => d.life > 0);
+  for (const q of popups) { q.y += q.vy * dt; q.vy *= 0.92; q.life -= dt; }
+  popups = popups.filter(q => q.life > 0);
 
   shake = Math.max(0, shake - dt * 24);
 }
@@ -845,14 +872,18 @@ function draw() {
       ctx.fillStyle = g; ctx.beginPath(); ctx.arc(player.x, player.y, au._r, 0, TAU); ctx.fill();
     }
 
-    // motes
-    ctx.fillStyle = '#5ec8ff';
+    // motes (with a comet trail while being drawn in)
+    ctx.lineCap = 'round';
     for (const m of motes) {
       if (m.life < 4 && Math.floor(m.life * 6) % 2 === 0) continue; // blink out
-      ctx.globalAlpha = m.big ? 1 : 0.9;
+      if (m.pull) {
+        ctx.strokeStyle = rgba('#5ec8ff', 0.4); ctx.lineWidth = m.r * 1.3;
+        ctx.beginPath(); ctx.moveTo(m.px, m.py); ctx.lineTo(m.x, m.y); ctx.stroke();
+      }
+      ctx.globalAlpha = m.big ? 1 : 0.9; ctx.fillStyle = '#5ec8ff';
       ctx.beginPath(); ctx.arc(m.x, m.y, m.r, 0, TAU); ctx.fill();
     }
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = 1; ctx.lineWidth = 1; ctx.lineCap = 'butt';
 
     // drops
     for (const dp of drops) {
@@ -875,8 +906,9 @@ function draw() {
     // orbit orbs
     const orb = player.weapons['orbit'];
     if (orb && orb._pts) {
+      const oc = orb._evo ? EVOLUTIONS.orbit.color : '#ffd479';
       for (const p of orb._pts) {
-        ctx.fillStyle = '#ffd479';
+        ctx.fillStyle = oc;
         ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, TAU); ctx.fill();
         ctx.fillStyle = 'rgba(255,150,60,.35)';
         ctx.beginPath(); ctx.arc(p.x, p.y, p.r + 4, 0, TAU); ctx.fill();
@@ -936,9 +968,23 @@ function draw() {
       }
       ctx.globalAlpha = 1; ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
     }
+
+    // floating popups (cinder bounties, streak milestones)
+    if (popups.length) {
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      for (const q of popups) {
+        ctx.globalAlpha = clamp(q.life / q.max, 0, 1);
+        ctx.font = 'bold ' + Math.round(18 * q.big) + 'px "Trebuchet MS", sans-serif';
+        ctx.fillStyle = q.color; ctx.fillText(q.text, q.x, q.y);
+      }
+      ctx.globalAlpha = 1; ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+    }
   }
 
   ctx.restore();
+
+  // boss-death screen flash
+  if (flash > 0) { ctx.fillStyle = 'rgba(255,230,180,' + (flash * 0.5).toFixed(3) + ')'; ctx.fillRect(0, 0, W, H); }
 
   // joystick
   if (input.active && state === 'playing') {
@@ -1196,8 +1242,11 @@ function frame() {
   let dt = (t - lastT) / 1000; lastT = t;
   dt = Math.min(dt, 0.05); // clamp big jumps
   if (state === 'playing') {
+    // slow-mo and flash decay in real time so they feel crisp
+    if (slowmo > 0) slowmo = Math.max(0, slowmo - dt);
+    if (flash > 0) flash = Math.max(0, flash - dt * 2.2);
     if (hitStop > 0) hitStop -= dt; // brief freeze for impact
-    else update(dt);
+    else update(slowmo > 0 ? dt * 0.4 : dt);
     updateHUD();
   }
   draw();
@@ -1210,6 +1259,15 @@ requestAnimationFrame(frame);
    ===================================================================== */
 let currentChoices = [];
 function ownedWeaponCount() { return Object.keys(player.weapons).length; }
+// A weapon can evolve once it's maxed and its matching passive has been taken.
+function eligibleEvolutions() {
+  const out = [];
+  for (const id in EVOLUTIONS) {
+    const st = player.weapons[id]; const w = weaponById(id);
+    if (st && !st.evolved && st.level >= w.maxLevel && (player.passives[EVOLUTIONS[id].req] || 0) >= 1) out.push(id);
+  }
+  return out;
+}
 function rollChoices() {
   const pool = [];
   for (const w of WEAPONS) {
@@ -1224,13 +1282,20 @@ function rollChoices() {
   const chosen = []; const n = Math.min(pool.length, player.luck >= 4 ? 4 : 3);
   const work = pool.slice();
   for (let k = 0; k < n && work.length; k++) {
-    let total = work.reduce((s, o) => s + o.w, 0), r = Math.random() * total, idx = 0;
+    let total = work.reduce((s, o) => s + o.w, 0), r = rngSrc() * total, idx = 0;
     for (let i = 0; i < work.length; i++) { r -= work[i].w; if (r <= 0) { idx = i; break; } }
     chosen.push(work.splice(idx, 1)[0]);
   }
+  // guarantee an evolution offer takes a slot when one is available
+  const evos = eligibleEvolutions();
+  if (evos.length) { chosen.unshift({ kind: 'evo', id: evos[0], rar: 'evo' }); chosen.length = n; }
   return chosen;
 }
 function choiceView(o) {
+  if (o.kind === 'evo') {
+    const w = weaponById(o.id), e = EVOLUTIONS[o.id];
+    return { icon: w.icon, name: 'Evolve — ' + e.name, tag: '', desc: e.desc, rar: 'evo' };
+  }
   if (o.kind === 'weapon') {
     const w = weaponById(o.id);
     if (o.isNew) return { icon: w.icon, name: 'New — ' + w.name, tag: '', desc: w.desc, rar: 'new' };
@@ -1246,14 +1311,16 @@ function openLevelUp() {
     const v = choiceView(o);
     const d = document.createElement('button');
     d.className = 'up-card rar-' + v.rar;
-    const icHtml = o.kind === 'weapon'
+    const hasArt = o.kind === 'weapon' || o.kind === 'evo';
+    const icHtml = hasArt
       ? `<canvas class="uc-canvas" width="80" height="80"></canvas>`
       : `<div class="uc-ic">${v.icon}</div>`;
+    const rarLabel = v.rar === 'new' ? 'New weapon' : v.rar === 'evo' ? 'Evolution' : v.rar;
     d.innerHTML = `${icHtml}<div class="uc-body">
       <div class="uc-name">${v.name}${v.tag ? `<span class="lvltag">${v.tag}</span>` : ''}</div>
       <div class="uc-desc">${v.desc}</div>
-      <div class="uc-rar">${v.rar === 'new' ? 'New weapon' : v.rar}</div></div>`;
-    if (o.kind === 'weapon') { const cg = d.querySelector('.uc-canvas').getContext('2d'); cg.setTransform(2, 0, 0, 2, 0, 0); drawWeaponPortrait(cg, o.id, 20, 20, 14); }
+      <div class="uc-rar">${rarLabel}</div></div>`;
+    if (hasArt) { const cg = d.querySelector('.uc-canvas').getContext('2d'); cg.setTransform(2, 0, 0, 2, 0, 0); drawWeaponPortrait(cg, o.id, 20, 20, 14); }
     d.onclick = () => applyChoice(o);
     box.appendChild(d);
   });
@@ -1266,11 +1333,17 @@ function openLevelUp() {
   setState('levelup'); sfx.level();
 }
 function applyChoice(o) {
-  if (o.kind === 'weapon') {
+  if (o.kind === 'evo') {
+    const st = player.weapons[o.id]; if (st) st.evolved = true;
+    flash = 1; slowmo = Math.max(slowmo, 0.4);
+    popup(player.x, player.y - 34, EVOLUTIONS[o.id].name + '!', EVOLUTIONS[o.id].color, 1.2);
+    toast('Evolved: ' + EVOLUTIONS[o.id].name);
+  } else if (o.kind === 'weapon') {
     const cur = player.weapons[o.id];
     if (cur) cur.level++;
     else player.weapons[o.id] = { level: 1, cd: 0, angle: 0 };
   } else {
+    player.passives[o.id] = (player.passives[o.id] || 0) + 1;
     passiveById(o.id).eff(player);
   }
   levelQueue--;
@@ -1291,6 +1364,7 @@ function endRun() {
   if (player.level > save.best.level) save.best.level = player.level;
   if (killCount > save.best.kills) save.best.kills = killCount;
   if (save.totals.kills >= 2000) grantAchievement('slayer');
+  if (seenRun) Object.keys(seenRun).forEach(k => save.seen[k] = true);
   // daily best (score = cinders earned this daily run)
   if (dailyMode) {
     const key = todayKey();
@@ -1456,17 +1530,34 @@ function showPause() {
 }
 
 /* ---- Codex: bestiary of foes + arsenal of weapons, with live art ---- */
+function drawUnknownPortrait(g, x, y, r) {
+  g.save(); g.translate(x, y);
+  g.fillStyle = 'rgba(255,255,255,0.05)'; g.beginPath(); g.arc(0, 0, r, 0, TAU); g.fill();
+  g.strokeStyle = 'rgba(255,255,255,0.18)'; g.lineWidth = 2; g.stroke();
+  g.fillStyle = 'rgba(255,255,255,0.4)'; g.font = 'bold ' + Math.round(r * 1.3) + 'px "Trebuchet MS", sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('?', 0, 1);
+  g.textAlign = 'start'; g.textBaseline = 'alphabetic'; g.restore();
+}
+function foeSeen(id) { return !!save.seen[id]; }
 function codexCard(kind, id) {
   const div = document.createElement('div');
   div.className = 'card-item';
   let name, desc;
-  if (kind === 'foe') { name = ENEMY_INFO[id].name; desc = ENEMY_INFO[id].desc; }
-  else { const w = weaponById(id); name = w.name; desc = w.desc; }
+  if (kind === 'foe') {
+    const seen = foeSeen(id);
+    name = seen ? ENEMY_INFO[id].name : '???';
+    desc = seen ? ENEMY_INFO[id].desc : 'Not yet encountered — it still waits in the dark.';
+    if (!seen) div.classList.add('codex-unknown');
+  } else {
+    const w = weaponById(id); name = w.name;
+    const ev = EVOLUTIONS[id];
+    desc = w.desc + (ev ? `<br><span style="color:#8a806f">Evolves with ${passiveById(ev.req).name} → ${ev.name}</span>` : '');
+  }
   div.innerHTML = `<div class="ci-head"><div class="ci-name"><canvas class="portrait" width="96" height="96"></canvas>${name}</div></div>
     <div class="ci-desc">${desc}</div>`;
   const pg = div.querySelector('.portrait').getContext('2d');
   pg.setTransform(2, 0, 0, 2, 0, 0);
-  if (kind === 'foe') drawEnemyPortrait(pg, id, 24, 24, id.startsWith('boss') ? 15 : 14);
+  if (kind === 'foe') { if (foeSeen(id)) drawEnemyPortrait(pg, id, 24, 24, id.startsWith('boss') ? 15 : 14); else drawUnknownPortrait(pg, 24, 24, 13); }
   else drawWeaponPortrait(pg, id, 24, 24, 15);
   return div;
 }
@@ -1477,13 +1568,16 @@ function renderCodex() {
   CODEX_FOES.forEach(t => foes.appendChild(codexCard('foe', t)));
   const arse = el('codex-arsenal'); arse.innerHTML = '';
   WEAPONS.forEach(w => arse.appendChild(codexCard('weapon', w.id)));
+  const nSeen = CODEX_FOES.filter(foeSeen).length;
+  const foesH = document.querySelector('#screen-codex .codex-h');
+  if (foesH) foesH.textContent = `Foes (${nSeen}/${CODEX_FOES.length})`;
   // gently animate the codex portraits while the screen is open
   clearInterval(codexTimer);
   codexTimer = setInterval(() => {
     if (state !== 'codex') { clearInterval(codexTimer); return; }
     document.querySelectorAll('#screen-codex .portrait').forEach((cv, i) => {
       const g = cv.getContext('2d'); g.setTransform(2, 0, 0, 2, 0, 0); g.clearRect(0, 0, 48, 48);
-      if (i < CODEX_FOES.length) drawEnemyPortrait(g, CODEX_FOES[i], 24, 24, CODEX_FOES[i].startsWith('boss') ? 15 : 14);
+      if (i < CODEX_FOES.length) { const id = CODEX_FOES[i]; if (foeSeen(id)) drawEnemyPortrait(g, id, 24, 24, id.startsWith('boss') ? 15 : 14); else drawUnknownPortrait(g, 24, 24, 13); }
       else drawWeaponPortrait(g, WEAPONS[i - CODEX_FOES.length].id, 24, 24, 15);
     });
   }, 90);
