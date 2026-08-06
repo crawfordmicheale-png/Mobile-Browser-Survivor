@@ -13,10 +13,13 @@ permissions:
   pages: write
   id-token: write
 
-# Let a newer deploy supersede an in-progress one instead of failing.
+# Queue deploys instead of cancelling them. With an approval-gated github-pages
+# environment, cancel-in-progress:true would cancel a pending deploy the moment a
+# newer merge lands, so nothing ever publishes. false lets each queued deploy run
+# to completion in order.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
