@@ -1,0 +1,17 @@
+{
+  "name": "EMBER — survivor bullet-hell",
+  "short_name": "EMBER",
+  "description": "A single dying spark holds back the dark. A mobile survivor bullet-hell with deep meta-progression.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#08080d",
+  "theme_color": "#0a0a0f",
+  "categories": ["games"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

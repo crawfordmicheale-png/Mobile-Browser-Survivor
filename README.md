@@ -49,9 +49,26 @@ For GitHub Pages: enable Pages on this branch/root and the game is live.
 
 ## Weapons (in-run)
 
-Spark (homing bolts), Nova (radial burst), Orbit (guardian flames), Lance
+Spark (diamond bolts), Nova (radial burst), Orbit (guardian flames), Lance
 (piercing beam), Arc (chain lightning), Pyre Aura (burning field), and Cinder
-Field (lingering ground). Each scales through 8 levels; carry up to 6 at once.
+Field (lingering ground). Each has its own neon projectile shape and motion
+trail, scales through 8 levels, and you can carry up to 6 at once.
+
+## Codex
+
+An in-game **Codex** (from the main menu) is a living bestiary and armoury: every
+foe and every weapon rendered with its actual in-game art and a short description,
+so the hand-crafted neon shapes have a home in the menus.
+
+## Sound & install
+
+- **Audio** — chiptune-style SFX plus a slow, generated ambient soundtrack (a
+  minor-pentatonic drift), all synthesised with the Web Audio API — no audio
+  files. Toggle sound from the main menu (🔊) or the pause screen; the choice is
+  saved.
+- **Installable PWA** — a web app manifest, icons, and a service worker make
+  EMBER installable to your home screen and playable offline once loaded. On iOS,
+  use Safari's *Share → Add to Home Screen*; on Android/Chrome, *Install app*.
 
 ## Files
 
@@ -60,6 +77,7 @@ Field (lingering ground). Each scales through 8 levels; carry up to 6 at once.
 | `index.html` | Markup: canvas, HUD, and all menu/overlay screens |
 | `style.css`  | Mobile-first, theme-aware styling with safe-area insets |
 | `game.js`    | The whole engine: loop, entities, weapons, meta-progression, UI |
+| `manifest.webmanifest` · `sw.js` · `icon-*.png` | PWA: install + offline shell |
 
 ## Design notes
 

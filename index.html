@@ -5,6 +5,9 @@
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <title>EMBER — a survivor bullet-hell</title>
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<link rel="icon" href="icon-192.png" />
 <link rel="stylesheet" href="style.css" />
 <div id="app">
   <canvas id="game"></canvas>
@@ -29,10 +32,26 @@
       <button class="btn primary" id="btn-play">Descend</button>
       <button class="btn" id="btn-forge">The Forge</button>
       <button class="btn" id="btn-embers">Embers</button>
+      <button class="btn" id="btn-codex">Codex</button>
       <button class="btn ghost" id="btn-how">How to play</button>
     </div>
     <div class="menu-stats" id="menu-stats"></div>
+    <button id="mute-btn" aria-label="Toggle sound">🔊</button>
     <div class="credit">A tiny game about a small light.</div>
+  </div>
+
+  <!-- Codex (bestiary + arsenal) -->
+  <div id="screen-codex" class="screen hidden panel">
+    <div class="panel-head">
+      <button class="btn back" data-back>‹ Back</button>
+      <h2>Codex</h2>
+      <div></div>
+    </div>
+    <p class="panel-sub">Everything that stalks the dark, and everything you can bring against it.</p>
+    <h3 class="codex-h">Foes</h3>
+    <div id="codex-foes" class="grid-list"></div>
+    <h3 class="codex-h">Arsenal</h3>
+    <div id="codex-arsenal" class="grid-list"></div>
   </div>
 
   <!-- Forge (permanent upgrades) -->
@@ -86,6 +105,7 @@
     <div id="pause-stats" class="run-summary"></div>
     <div class="menu-buttons">
       <button class="btn primary" id="btn-resume">Resume</button>
+      <button class="btn" id="btn-mute-pause">Sound: On</button>
       <button class="btn ghost" id="btn-quit">Abandon descent</button>
     </div>
   </div>
