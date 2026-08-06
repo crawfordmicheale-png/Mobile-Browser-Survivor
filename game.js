@@ -88,7 +88,7 @@ function freshSave() {
   return {
     cinders: 0, forge, selectedEmber:'spark',
     embers: { spark:true },
-    ascension: 0,
+    ascension: 0, muted: false,
     best: { time:0, level:0, kills:0 },
     totals: { runs:0, kills:0, time:0, cinders:0 },
     achievements: {},
@@ -267,7 +267,7 @@ function moveVector() {
 /* =====================================================================
    AUDIO — tiny WebAudio blips (no assets)
    ===================================================================== */
-let ac = null, muted = false;
+let ac = null, muted = !!save.muted;
 function actx() { if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} } return ac; }
 function beep(freq, dur, type = 'sine', vol = 0.06) {
   if (muted) return; const c = actx(); if (!c) return;
@@ -285,6 +285,37 @@ const sfx = {
   buy:   () => { beep(440, .07, 'triangle', .07); setTimeout(() => beep(660, .1, 'triangle', .07), 70); },
 };
 
+/* Ambient music — a slow minor-pentatonic drift, scheduled on WebAudio.
+   No assets; a soft drone plus a wandering arpeggio, intensifying a touch over time. */
+const music = (() => {
+  let on = false, next = 0, step = 0, timer = null;
+  const scale = [0, 3, 5, 7, 10], root = 220; // A minor pentatonic
+  const freq = semi => root * Math.pow(2, semi / 12);
+  function tone(c, f, t, dur, type, vol) {
+    if (muted) return;
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = type; o.frequency.value = f; o.connect(g); g.connect(c.destination);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + 0.04);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.start(t); o.stop(t + dur + 0.05);
+  }
+  function schedule() {
+    const c = ac; if (!c || !on) return;
+    while (next < c.currentTime + 0.25) {
+      if (step % 8 === 0) tone(c, freq(scale[0] - 12), next, 2.4, 'sine', 0.045);       // drone
+      if (step % 8 === 4) tone(c, freq(scale[0] - 5), next, 1.8, 'sine', 0.03);         // fifth swell
+      const oct = (Math.floor(step / 5) % 2) ? 12 : 0;
+      tone(c, freq(scale[step % scale.length] + oct), next, 0.55, 'triangle', 0.032);   // arpeggio
+      next += 0.3; step++;
+    }
+  }
+  return {
+    start() { const c = actx(); if (!c || on) return; on = true; step = 0; next = c.currentTime + 0.1; timer = setInterval(schedule, 60); },
+    stop() { on = false; if (timer) clearInterval(timer); timer = null; },
+    get on() { return on; },
+  };
+})();
+
 /* =====================================================================
    PARTICLES / FX
    ===================================================================== */
@@ -299,6 +330,18 @@ function burst(x, y, color, n, spd = 120, life = .5) {
 /* =====================================================================
    ENEMIES
    ===================================================================== */
+// Single source of truth for enemy identity (name / colour / codex blurb).
+const ENEMY_INFO = {
+  drifter:  { name:'Drifter',  color:'#ff2fb0', desc:'A husk of the dark that drifts steadily toward the light. Weak, but never alone.' },
+  swarm:    { name:'Shard',    color:'#22e6ff', desc:'Fast, fragile splinters that arrive in packs and overwhelm the careless.' },
+  brute:    { name:'Brute',    color:'#9b5cff', desc:'Slow and heavily armored. Soaks a great deal of damage before it falls.' },
+  shooter:  { name:'Sentinel', color:'#3d7bff', desc:'Keeps its distance and looses aimed bolts. Its barrel tracks you.' },
+  splitter: { name:'Divider',  color:'#6dff5c', desc:'A dividing cell — when destroyed it splits into smaller, quicker fragments.' },
+  orbiter:  { name:'Orbiter',  color:'#c06bff', desc:'Circles you at range, loosing spirals of fire. Hard to pin down.' },
+  mini:     { name:'Cell',     color:'#a6ff7a', desc:'A fragment shed by a Divider. Small, but swift.' },
+  boss:     { name:'Warden',   color:'#ff2d55', desc:'A great construct of the dark that rises every three minutes. Fells it for a bounty of cinders.' },
+};
+
 function enemyTypesForTime(min) {
   const t = ['drifter'];
   if (min >= 0.5) t.push('swarm');
@@ -310,17 +353,17 @@ function enemyTypesForTime(min) {
 }
 function spawnEnemy(type, x, y, scale) {
   const base = {
-    drifter:  { hp:16, r:14, speed:74, dmg:6,  color:'#ff2fb0', xp:1, kind:'chase' },
-    swarm:    { hp:8,  r:9,  speed:118,dmg:5,  color:'#22e6ff', xp:1, kind:'chase' },
-    brute:    { hp:120,r:26, speed:42, dmg:14, color:'#9b5cff', xp:4, kind:'chase' },
-    shooter:  { hp:34, r:15, speed:52, dmg:9,  color:'#3d7bff', xp:3, kind:'shooter', fireCd:2.2 },
-    splitter: { hp:44, r:18, speed:60, dmg:10, color:'#6dff5c', xp:3, kind:'split' },
-    orbiter:  { hp:80, r:17, speed:80, dmg:12, color:'#c06bff', xp:6, kind:'orbiter', fireCd:1.6, orbA:rand(0,TAU) },
-    mini:     { hp:16, r:10, speed:86, dmg:6,  color:'#a6ff7a', xp:1, kind:'chase' },
+    drifter:  { hp:16, r:14, speed:74, dmg:6,  xp:1, kind:'chase' },
+    swarm:    { hp:8,  r:9,  speed:118,dmg:5,  xp:1, kind:'chase' },
+    brute:    { hp:120,r:26, speed:42, dmg:14, xp:4, kind:'chase' },
+    shooter:  { hp:34, r:15, speed:52, dmg:9,  xp:3, kind:'shooter', fireCd:2.2 },
+    splitter: { hp:44, r:18, speed:60, dmg:10, xp:3, kind:'split' },
+    orbiter:  { hp:80, r:17, speed:80, dmg:12, xp:6, kind:'orbiter', fireCd:1.6, orbA:rand(0,TAU) },
+    mini:     { hp:16, r:10, speed:86, dmg:6,  xp:1, kind:'chase' },
   }[type];
   const e = Object.assign({}, base, {
-    type, x, y, maxHP: Math.floor(base.hp * scale), touchCd: 0, fireT: (base.fireCd || 0) * Math.random(),
-    hitFlash: 0, knock: 0,
+    type, x, y, color: ENEMY_INFO[type].color, maxHP: Math.floor(base.hp * scale),
+    touchCd: 0, fireT: (base.fireCd || 0) * Math.random(), hitFlash: 0, knock: 0, aim: 0,
   });
   e.hp = e.maxHP;
   enemies.push(e);
@@ -441,8 +484,8 @@ function nearestEnemy(x, y, maxD) {
   for (const e of enemies) { const d = dist2(x, y, e.x, e.y); if (d < bd) { bd = d; best = e; } }
   return best;
 }
-function spawnShot(x, y, ang, spd, dmg, r, pierce, color, crit) {
-  shots.push({ x, y, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, dmg, r, pierce, color, crit, life: 2.4, hit: null });
+function spawnShot(x, y, ang, spd, dmg, r, pierce, color, crit, kind) {
+  shots.push({ x, y, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, dmg, r, pierce, color, crit, life: 2.4, hit: null, kind });
 }
 function updateWeapons(dt) {
   const dm = player.damageMult * momentumMult();
@@ -459,7 +502,7 @@ function updateWeapons(dt) {
           for (let i = 0; i < n; i++) {
             const off = (i - (n - 1) / 2) * 0.12;
             const c = critRoll(w.dmg(l) * dm);
-            spawnShot(player.x, player.y, baseA + off, w.speed * player.projSpeedMult, c.d, 6 * player.areaMult, w.pierce(l), '#ffd479', c.crit);
+            spawnShot(player.x, player.y, baseA + off, w.speed * player.projSpeedMult, c.d, 6 * player.areaMult, w.pierce(l), '#ffd479', c.crit, 'spark');
           }
         }
       }
@@ -470,7 +513,7 @@ function updateWeapons(dt) {
         for (let i = 0; i < n; i++) {
           const a = (i / n) * TAU;
           const c = critRoll(w.dmg(l) * dm);
-          spawnShot(player.x, player.y, a, w.speed * player.projSpeedMult, c.d, 6 * player.areaMult, 0, '#ff9a3c', c.crit);
+          spawnShot(player.x, player.y, a, w.speed * player.projSpeedMult, c.d, 6 * player.areaMult, 0, '#ff9a3c', c.crit, 'nova');
         }
       }
     } else if (id === 'beam') {
@@ -591,6 +634,7 @@ function update(dt) {
     const d = Math.hypot(player.x - e.x, player.y - e.y);
     if (e.kind === 'shooter') {
       // approach to a range, then fire
+      e.aim = ang;
       if (d > 260) { e.x += Math.cos(ang) * e.speed * dt; e.y += Math.sin(ang) * e.speed * dt; }
       else { e.x -= Math.cos(ang) * e.speed * 0.3 * dt; e.y -= Math.sin(ang) * e.speed * 0.3 * dt; }
       e.fireT -= dt; if (e.fireT <= 0) { e.fireT = e.fireCd; foeBullet(e.x, e.y, ang, 150, e.dmg); }
@@ -747,16 +791,27 @@ function draw() {
       }
     }
 
-    // player shots
+    // player shots — distinct neon glyph + motion trail per weapon
+    ctx.lineCap = 'round';
     for (const s of shots) {
-      ctx.fillStyle = s.crit ? '#ffffff' : s.color;
+      const a = Math.atan2(s.vy, s.vx);
+      const col = s.crit ? '#ffffff' : s.color;
+      const tl = s.beam ? 0.028 : 0.02;
+      ctx.strokeStyle = rgba(s.color, s.beam ? 0.5 : 0.34);
+      ctx.lineWidth = s.beam ? s.r * 1.5 : s.r * 1.05;
+      ctx.beginPath(); ctx.moveTo(s.x - s.vx * tl, s.y - s.vy * tl); ctx.lineTo(s.x, s.y); ctx.stroke();
+      ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(a); ctx.fillStyle = col;
       if (s.beam) {
-        ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(Math.atan2(s.vy, s.vx));
-        ctx.fillRect(-10, -s.r, 20, s.r * 2); ctx.restore();
-      } else {
-        ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, TAU); ctx.fill();
+        roundRect(ctx, -15, -s.r, 30, s.r * 2, s.r); ctx.fill();
+      } else if (s.kind === 'spark') {
+        ctx.beginPath(); ctx.moveTo(s.r * 1.6, 0); ctx.lineTo(0, s.r); ctx.lineTo(-s.r * 1.1, 0); ctx.lineTo(0, -s.r); ctx.closePath(); ctx.fill();
+      } else { // nova / default — glowing orb with hot core
+        ctx.beginPath(); ctx.arc(0, 0, s.r, 0, TAU); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,.72)'; ctx.beginPath(); ctx.arc(0, 0, s.r * 0.45, 0, TAU); ctx.fill();
       }
+      ctx.restore();
     }
+    ctx.lineWidth = 1; ctx.lineCap = 'butt';
 
     // chain fx
     for (const f of fx) {
@@ -893,7 +948,7 @@ function drawEnemyShape(g, e) {
       g.strokeStyle = flash ? '#fff' : color; g.lineWidth = 2; poly(g, 6, r * 0.58, t * 0.3); g.stroke();
       break;
     case 'shooter': { // turret pentagon with an aiming barrel
-      const aim = Math.atan2(player.y - e.y, player.x - e.x), bx = Math.cos(aim) * r * 1.5, by = Math.sin(aim) * r * 1.5;
+      const aim = e.aim || 0, bx = Math.cos(aim) * r * 1.5, by = Math.sin(aim) * r * 1.5;
       g.strokeStyle = flash ? '#fff' : color; g.lineWidth = 3; g.beginPath(); g.moveTo(0, 0); g.lineTo(bx, by); g.stroke();
       g.fillStyle = flash ? '#fff' : color; g.beginPath(); g.arc(bx, by, r * 0.22, 0, TAU); g.fill();
       neonStyle(g, color, flash, 2); poly(g, 5, r, -Math.PI / 2); g.fill(); g.stroke();
@@ -934,6 +989,45 @@ function drawHeart(x, y, s) {
   ctx.bezierCurveTo(0, -10, 6, -10, 6, -6);
   ctx.bezierCurveTo(6, -2, 0, 0, 0, 4);
   ctx.fill(); ctx.restore();
+}
+
+/* ---- Codex portraits (reuse the live art on menu canvases) ---- */
+function drawEnemyPortrait(g, type, x, y, r) {
+  const e = { type, r, color: ENEMY_INFO[type].color, hitFlash: 0, orbA: 0.6, aim: -0.5, isBoss: type === 'boss' };
+  g.save(); g.translate(x, y);
+  if (e.isBoss) { g.fillStyle = rgba(e.color, 0.14); g.beginPath(); g.arc(0, 0, r * 1.55, 0, TAU); g.fill(); }
+  drawEnemyShape(g, e);
+  g.restore();
+}
+function drawWeaponPortrait(g, id, x, y, r) {
+  g.save(); g.translate(x, y); g.lineJoin = 'round'; g.lineCap = 'round';
+  const t = runTime;
+  if (id === 'spark') {
+    g.strokeStyle = rgba('#ffd479', .4); g.lineWidth = r * 0.5; g.beginPath(); g.moveTo(-r * 1.3, 0); g.lineTo(-r * 0.6, 0); g.stroke();
+    g.fillStyle = '#ffd479'; g.beginPath(); g.moveTo(r, 0); g.lineTo(0, r * 0.6); g.lineTo(-r * 0.7, 0); g.lineTo(0, -r * 0.6); g.closePath(); g.fill();
+  } else if (id === 'nova') {
+    g.fillStyle = '#ff9a3c'; for (let i = 0; i < 8; i++) { const a = i / 8 * TAU + t * 0.5; g.beginPath(); g.arc(Math.cos(a) * r * 0.85, Math.sin(a) * r * 0.85, r * 0.2, 0, TAU); g.fill(); }
+    g.fillStyle = '#fff6e0'; g.beginPath(); g.arc(0, 0, r * 0.3, 0, TAU); g.fill();
+  } else if (id === 'orbit') {
+    g.strokeStyle = rgba('#ffd479', .3); g.lineWidth = 2; g.beginPath(); g.arc(0, 0, r * 0.8, 0, TAU); g.stroke();
+    g.fillStyle = '#ffd479'; for (let i = 0; i < 3; i++) { const a = i / 3 * TAU + t * 1.4; g.beginPath(); g.arc(Math.cos(a) * r * 0.8, Math.sin(a) * r * 0.8, r * 0.26, 0, TAU); g.fill(); }
+    g.fillStyle = '#fff6e0'; g.beginPath(); g.arc(0, 0, r * 0.22, 0, TAU); g.fill();
+  } else if (id === 'beam') {
+    g.rotate(-0.5);
+    g.strokeStyle = rgba('#8ad0ff', .4); g.lineWidth = r * 0.7; g.beginPath(); g.moveTo(-r * 1.2, 0); g.lineTo(-r * 0.2, 0); g.stroke();
+    g.fillStyle = '#8ad0ff'; roundRect(g, -r * 0.2, -r * 0.28, r * 1.3, r * 0.56, r * 0.28); g.fill();
+  } else if (id === 'chain') {
+    g.strokeStyle = '#c9a6ff'; g.lineWidth = r * 0.3; g.beginPath(); g.moveTo(-r, -r * 0.55); g.lineTo(-r * 0.2, -r * 0.1); g.lineTo(-r * 0.5, r * 0.2); g.lineTo(r, r * 0.6); g.stroke();
+  } else if (id === 'aura') {
+    g.fillStyle = rgba('#ff6a2b', .2); g.beginPath(); g.arc(0, 0, r, 0, TAU); g.fill();
+    g.strokeStyle = rgba('#ff9a3c', .6); g.lineWidth = 2; g.beginPath(); g.arc(0, 0, r * 0.62, 0, TAU); g.stroke();
+    g.fillStyle = '#ff9a3c'; g.beginPath(); g.arc(0, 0, r * 0.24, 0, TAU); g.fill();
+  } else if (id === 'pyre') {
+    g.fillStyle = rgba('#ff6a2b', .25); g.beginPath(); g.arc(0, r * 0.35, r * 0.9, 0, TAU); g.fill();
+    g.fillStyle = '#ff9a3c';
+    for (let i = -1; i <= 1; i++) { const cx = i * r * 0.42; g.beginPath(); g.moveTo(cx, r * 0.35); g.quadraticCurveTo(cx - r * 0.14, -r * 0.15, cx, -r * 0.6); g.quadraticCurveTo(cx + r * 0.2, -r * 0.1, cx, r * 0.35); g.fill(); }
+  }
+  g.restore();
 }
 
 /* =====================================================================
@@ -1045,6 +1139,7 @@ function applyChoice(o) {
    END RUN
    ===================================================================== */
 function endRun() {
+  music.stop();
   sfx.die();
   const earned = computeCinders();
   save.cinders += earned;
@@ -1061,7 +1156,7 @@ function endRun() {
 /* =====================================================================
    SCREENS / UI
    ===================================================================== */
-const screens = { menu:'screen-menu', forge:'screen-forge', embers:'screen-embers', how:'screen-how', levelup:'screen-levelup', pause:'screen-pause', over:'screen-over' };
+const screens = { menu:'screen-menu', forge:'screen-forge', embers:'screen-embers', codex:'screen-codex', how:'screen-how', levelup:'screen-levelup', pause:'screen-pause', over:'screen-over' };
 function setState(s) {
   state = s;
   Object.values(screens).forEach(id => el(id).classList.add('hidden'));
@@ -1187,23 +1282,77 @@ function showPause() {
     <div class="rs-row"><span>Cinders so far</span><b>✦ ${computeCinders()}</b></div>`;
 }
 
+/* ---- Codex: bestiary of foes + arsenal of weapons, with live art ---- */
+function codexCard(kind, id) {
+  const div = document.createElement('div');
+  div.className = 'card-item';
+  let name, desc;
+  if (kind === 'foe') { name = ENEMY_INFO[id].name; desc = ENEMY_INFO[id].desc; }
+  else { const w = weaponById(id); name = w.name; desc = w.desc; }
+  div.innerHTML = `<div class="ci-head"><div class="ci-name"><canvas class="portrait" width="96" height="96"></canvas>${name}</div></div>
+    <div class="ci-desc">${desc}</div>`;
+  const pg = div.querySelector('.portrait').getContext('2d');
+  pg.setTransform(2, 0, 0, 2, 0, 0);
+  if (kind === 'foe') drawEnemyPortrait(pg, id, 24, 24, id === 'boss' ? 15 : 14);
+  else drawWeaponPortrait(pg, id, 24, 24, 15);
+  return div;
+}
+let codexTimer = null;
+function renderCodex() {
+  const foes = el('codex-foes'); foes.innerHTML = '';
+  ['drifter', 'swarm', 'brute', 'shooter', 'splitter', 'orbiter', 'boss'].forEach(t => foes.appendChild(codexCard('foe', t)));
+  const arse = el('codex-arsenal'); arse.innerHTML = '';
+  WEAPONS.forEach(w => arse.appendChild(codexCard('weapon', w.id)));
+  // gently animate the codex portraits while the screen is open
+  clearInterval(codexTimer);
+  codexTimer = setInterval(() => {
+    if (state !== 'codex') { clearInterval(codexTimer); return; }
+    document.querySelectorAll('#screen-codex .portrait').forEach((cv, i) => {
+      const g = cv.getContext('2d'); g.setTransform(2, 0, 0, 2, 0, 0); g.clearRect(0, 0, 48, 48);
+      const foeIds = ['drifter', 'swarm', 'brute', 'shooter', 'splitter', 'orbiter', 'boss'];
+      if (i < foeIds.length) drawEnemyPortrait(g, foeIds[i], 24, 24, foeIds[i] === 'boss' ? 15 : 14);
+      else drawWeaponPortrait(g, WEAPONS[i - foeIds.length].id, 24, 24, 15);
+    });
+  }, 90);
+}
+
+/* ---- sound ---- */
+function setMuted(v) {
+  muted = v; save.muted = v; persist();
+  const icon = v ? '🔇' : '🔊';
+  const mb = el('mute-btn'); if (mb) mb.textContent = icon;
+  const pb = el('btn-mute-pause'); if (pb) pb.textContent = 'Sound: ' + (v ? 'Off' : 'On');
+  if (v) music.stop();
+  else if (state === 'playing' || state === 'levelup' || state === 'pause') { actx(); music.start(); }
+}
+
 /* --------------------------------------------------------------- wiring */
-el('btn-play').onclick = () => { actx(); startRun(); };
+el('btn-play').onclick = () => { actx(); if (!muted) music.start(); startRun(); };
 el('btn-forge').onclick = () => { renderForge(); setState('forge'); };
 el('btn-embers').onclick = () => { renderEmbers(); setState('embers'); };
+el('btn-codex').onclick = () => { renderCodex(); setState('codex'); };
 el('btn-how').onclick = () => setState('how');
 document.querySelectorAll('[data-back]').forEach(b => b.onclick = () => { renderMenuStats(); setState('menu'); });
 
 el('pause-btn').onclick = () => { if (state === 'playing') { showPause(); setState('pause'); } };
 el('btn-resume').onclick = () => { lastT = now(); setState('playing'); };
-el('btn-quit').onclick = () => { endRun(); };
+el('btn-quit').onclick = () => { music.stop(); endRun(); };
 
-el('btn-again').onclick = () => startRun();
+el('btn-again').onclick = () => { if (!muted) { actx(); music.start(); } startRun(); };
 el('btn-forge2').onclick = () => { renderForge(); setState('forge'); };
-el('btn-menu').onclick = () => { renderMenuStats(); setState('menu'); };
+el('btn-menu').onclick = () => { music.stop(); renderMenuStats(); setState('menu'); };
+
+el('mute-btn').onclick = () => { actx(); setMuted(!muted); };
+el('btn-mute-pause').onclick = () => { actx(); setMuted(!muted); };
+setMuted(muted); // sync button labels/icons on boot
 
 // pause when tab hidden
 document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'playing') { showPause(); setState('pause'); } });
+
+// register service worker for offline / install-to-home-screen (https or localhost only)
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
 
 // boot
 renderMenuStats();
