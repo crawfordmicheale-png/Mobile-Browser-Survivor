@@ -195,7 +195,7 @@ function baseStats() {
     pickupRadius:82, xpMult:1, greedMult:1,
     armor:0, regen:0, extraProjectiles:0, areaMult:1, projSpeedMult:1,
     luck:0, momentumRate:0, revives:0, headStart:0,
-    invuln:0, level:1, xp:0, xpNext:6, rerolls:2, dmgFlash:0,
+    invuln:0, level:1, xp:0, xpNext:6, rerolls:2, dmgFlash:0, face:0,
     weapons:{},
   };
 }
@@ -310,13 +310,13 @@ function enemyTypesForTime(min) {
 }
 function spawnEnemy(type, x, y, scale) {
   const base = {
-    drifter:  { hp:16, r:14, speed:74, dmg:6,  color:'#c65b8a', xp:1, kind:'chase' },
-    swarm:    { hp:8,  r:9,  speed:118,dmg:5,  color:'#e0714f', xp:1, kind:'chase' },
-    brute:    { hp:120,r:26, speed:42, dmg:14, color:'#8a4bd0', xp:4, kind:'chase' },
-    shooter:  { hp:34, r:15, speed:52, dmg:9,  color:'#4fb0e0', xp:3, kind:'shooter', fireCd:2.2 },
-    splitter: { hp:44, r:18, speed:60, dmg:10, color:'#7be07b', xp:3, kind:'split' },
-    orbiter:  { hp:80, r:17, speed:80, dmg:12, color:'#c9a6ff', xp:6, kind:'orbiter', fireCd:1.6, orbA:rand(0,TAU) },
-    mini:     { hp:16, r:10, speed:86, dmg:6,  color:'#a9e07b', xp:1, kind:'chase' },
+    drifter:  { hp:16, r:14, speed:74, dmg:6,  color:'#ff2fb0', xp:1, kind:'chase' },
+    swarm:    { hp:8,  r:9,  speed:118,dmg:5,  color:'#22e6ff', xp:1, kind:'chase' },
+    brute:    { hp:120,r:26, speed:42, dmg:14, color:'#9b5cff', xp:4, kind:'chase' },
+    shooter:  { hp:34, r:15, speed:52, dmg:9,  color:'#3d7bff', xp:3, kind:'shooter', fireCd:2.2 },
+    splitter: { hp:44, r:18, speed:60, dmg:10, color:'#6dff5c', xp:3, kind:'split' },
+    orbiter:  { hp:80, r:17, speed:80, dmg:12, color:'#c06bff', xp:6, kind:'orbiter', fireCd:1.6, orbA:rand(0,TAU) },
+    mini:     { hp:16, r:10, speed:86, dmg:6,  color:'#a6ff7a', xp:1, kind:'chase' },
   }[type];
   const e = Object.assign({}, base, {
     type, x, y, maxHP: Math.floor(base.hp * scale), touchCd: 0, fireT: (base.fireCd || 0) * Math.random(),
@@ -564,6 +564,7 @@ function update(dt) {
   const mv = moveVector();
   player.x += mv.x * player.speed * mv.m * dt;
   player.y += mv.y * player.speed * mv.m * dt;
+  if (mv.m > 0.01) player.face = Math.atan2(mv.y, mv.x);
   cam.x = player.x; cam.y = player.y;
 
   player.invuln = Math.max(0, player.invuln - dt);
@@ -807,48 +808,121 @@ function drawBackground(ox, oy) {
   for (let x = startX; x < W + sp; x += sp)
     for (let y = startY; y < H + sp; y += sp) { ctx.beginPath(); ctx.arc(x, y, 1.3, 0, TAU); ctx.fill(); }
 }
+/* ---- neon shape helpers (shared by game + menu previews) ---- */
+const _rgbaCache = {};
+function rgba(hex, a) {
+  const k = hex + a; let v = _rgbaCache[k]; if (v) return v;
+  let h = hex.replace('#', ''); if (h.length === 3) h = h.split('').map(c => c + c).join('');
+  const n = parseInt(h, 16);
+  v = `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; _rgbaCache[k] = v; return v;
+}
+function poly(g, n, r, rot) { g.beginPath(); for (let i = 0; i < n; i++) { const a = rot + i / n * TAU, px = Math.cos(a) * r, py = Math.sin(a) * r; i ? g.lineTo(px, py) : g.moveTo(px, py); } g.closePath(); }
+function star(g, n, ro, ri, rot) { g.beginPath(); for (let i = 0; i < n * 2; i++) { const rr = i % 2 ? ri : ro, a = rot + i / (n * 2) * TAU, px = Math.cos(a) * rr, py = Math.sin(a) * rr; i ? g.lineTo(px, py) : g.moveTo(px, py); } g.closePath(); }
+function roundRect(g, x, y, w, h, rr) { g.beginPath(); g.moveTo(x + rr, y); g.arcTo(x + w, y, x + w, y + h, rr); g.arcTo(x + w, y + h, x, y + h, rr); g.arcTo(x, y + h, x, y, rr); g.arcTo(x, y, x + w, y, rr); g.closePath(); }
+
+/* Draw an Ember (player character) — distinct silhouette per id, warm glow. */
+function drawEmber(g, id, color, x, y, r, t, face) {
+  g.save(); g.translate(x, y); g.lineJoin = 'round'; g.lineCap = 'round';
+  const gl = g.createRadialGradient(0, 0, 2, 0, 0, r * 2.6);
+  gl.addColorStop(0, '#fff6e0'); gl.addColorStop(.35, color); gl.addColorStop(1, rgba(color, 0));
+  g.fillStyle = gl; g.beginPath(); g.arc(0, 0, r * 2.6, 0, TAU); g.fill();
+  const W_ = '#fff6e0';
+  if (id === 'nova') {
+    g.fillStyle = color;
+    for (let i = 0; i < 10; i++) { g.save(); g.rotate(t * 0.5 + i / 10 * TAU); g.beginPath(); g.moveTo(r * 0.7, -r * 0.13); g.lineTo(r * 1.32, 0); g.lineTo(r * 0.7, r * 0.13); g.closePath(); g.fill(); g.restore(); }
+    g.fillStyle = W_; g.beginPath(); g.arc(0, 0, r * 0.72, 0, TAU); g.fill();
+    g.fillStyle = color; g.beginPath(); g.arc(0, 0, r * 0.33, 0, TAU); g.fill();
+  } else if (id === 'warden') {
+    g.strokeStyle = color; g.lineWidth = 3;
+    for (let i = 0; i < 6; i++) { const a = t * 0.6 + i / 6 * TAU; g.beginPath(); g.arc(0, 0, r * 1.5, a + .18, a + TAU / 6 - .18); g.stroke(); }
+    g.fillStyle = W_; poly(g, 6, r * 0.88, t * 0.3); g.fill();
+    g.fillStyle = color; poly(g, 6, r * 0.44, t * 0.3); g.fill();
+  } else if (id === 'hunter') {
+    g.rotate(face || 0);
+    g.fillStyle = color; g.beginPath(); g.moveTo(r * 1.4, 0); g.lineTo(-r * 0.7, r * 0.88); g.lineTo(-r * 0.22, 0); g.lineTo(-r * 0.7, -r * 0.88); g.closePath(); g.fill();
+    g.fillStyle = W_; g.beginPath(); g.arc(r * 0.12, 0, r * 0.5, 0, TAU); g.fill();
+  } else if (id === 'storm') {
+    g.strokeStyle = color; g.lineWidth = 3;
+    for (let i = 0; i < 3; i++) { g.save(); g.rotate(t * 1.1 + i / 3 * TAU); g.beginPath(); g.moveTo(r * 0.5, -r * 0.18); g.lineTo(r * 0.98, r * 0.02); g.lineTo(r * 0.78, r * 0.24); g.lineTo(r * 1.36, r * 0.62); g.stroke(); g.restore(); }
+    g.fillStyle = W_; g.beginPath(); g.arc(0, 0, r * 0.6, 0, TAU); g.fill();
+    g.fillStyle = color; g.beginPath(); g.arc(0, 0, r * 0.28, 0, TAU); g.fill();
+  } else if (id === 'glutton') {
+    const pulse = 0.55 + Math.sin(t * 3) * 0.12;
+    g.strokeStyle = color; g.lineWidth = r * 0.32; g.beginPath(); g.arc(0, 0, r * 0.92, 0, TAU); g.stroke();
+    g.fillStyle = W_; g.beginPath(); g.arc(0, 0, r * pulse, 0, TAU); g.fill();
+  } else { // spark (default) — four-point star
+    g.fillStyle = color; star(g, 4, r * 1.28, r * 0.46, t * 0.7); g.fill();
+    g.fillStyle = W_; g.beginPath(); g.arc(0, 0, r * 0.6, 0, TAU); g.fill();
+  }
+  g.restore();
+}
+
 function drawPlayer() {
   const p = player;
-  const g = ctx.createRadialGradient(p.x, p.y, 2, p.x, p.y, p.r * 2.6);
-  g.addColorStop(0, '#fff2d0'); g.addColorStop(0.4, p.ember.color); g.addColorStop(1, 'rgba(255,90,40,0)');
-  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 2.6, 0, TAU); ctx.fill();
-  ctx.fillStyle = p.invuln > 0 && Math.floor(runTime * 20) % 2 ? '#ffffff' : '#fff6e0';
-  ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, TAU); ctx.fill();
-  ctx.fillStyle = p.ember.color;
-  ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 0.55, 0, TAU); ctx.fill();
+  const blink = p.invuln > 0 && Math.floor(runTime * 18) % 2 === 0;
+  if (blink) ctx.globalAlpha = 0.5;
+  drawEmber(ctx, p.ember.id, p.ember.color, p.x, p.y, p.r, runTime, p.face || 0);
+  ctx.globalAlpha = 1;
+}
+
+/* Neon fill+stroke style for an enemy body. */
+function neonStyle(g, color, flash, lw) {
+  g.fillStyle = flash ? 'rgba(255,255,255,0.92)' : rgba(color, 0.18);
+  g.strokeStyle = flash ? '#ffffff' : color; g.lineWidth = lw;
+}
+function drawEnemyShape(g, e) {
+  const r = e.r, t = runTime, color = e.color, flash = e.hitFlash > 0;
+  g.lineJoin = 'round';
+  if (e.isBoss) {
+    neonStyle(g, color, flash, 3); star(g, 8, r * 1.15, r * 0.74, t * 0.5); g.fill(); g.stroke();
+    g.strokeStyle = flash ? '#fff' : color; g.lineWidth = 3; g.beginPath(); g.arc(0, 0, r * 0.62, 0, TAU); g.stroke();
+    g.fillStyle = flash ? '#fff' : rgba(color, 0.5); poly(g, 3, r * 0.42, -t * 0.9); g.fill();
+    g.fillStyle = '#fff'; g.beginPath(); g.arc(0, 0, r * 0.15, 0, TAU); g.fill();
+    return;
+  }
+  switch (e.type) {
+    case 'drifter': // husk: circle with an eye-slit
+      neonStyle(g, color, flash, 2); g.beginPath(); g.arc(0, 0, r, 0, TAU); g.fill(); g.stroke();
+      g.strokeStyle = flash ? '#fff' : color; g.lineWidth = 2.4; g.beginPath(); g.moveTo(-r * 0.5, 0); g.lineTo(r * 0.5, 0); g.stroke();
+      break;
+    case 'swarm': case 'mini': // sharp little shard
+      neonStyle(g, color, flash, 1.8); poly(g, 3, r, -Math.PI / 2 + t * 2.2); g.fill(); g.stroke();
+      break;
+    case 'brute': // armored double hexagon
+      neonStyle(g, color, flash, 3); poly(g, 6, r, t * 0.3); g.fill(); g.stroke();
+      g.strokeStyle = flash ? '#fff' : color; g.lineWidth = 2; poly(g, 6, r * 0.58, t * 0.3); g.stroke();
+      break;
+    case 'shooter': { // turret pentagon with an aiming barrel
+      const aim = Math.atan2(player.y - e.y, player.x - e.x), bx = Math.cos(aim) * r * 1.5, by = Math.sin(aim) * r * 1.5;
+      g.strokeStyle = flash ? '#fff' : color; g.lineWidth = 3; g.beginPath(); g.moveTo(0, 0); g.lineTo(bx, by); g.stroke();
+      g.fillStyle = flash ? '#fff' : color; g.beginPath(); g.arc(bx, by, r * 0.22, 0, TAU); g.fill();
+      neonStyle(g, color, flash, 2); poly(g, 5, r, -Math.PI / 2); g.fill(); g.stroke();
+      break;
+    }
+    case 'splitter': { // rounded cell with a division line
+      const s = r * 0.85; neonStyle(g, color, flash, 2); roundRect(g, -s, -s, s * 2, s * 2, r * 0.32); g.fill(); g.stroke();
+      g.strokeStyle = flash ? '#fff' : color; g.lineWidth = 2; g.beginPath(); g.moveTo(0, -s); g.lineTo(0, s); g.stroke();
+      break;
+    }
+    case 'orbiter': { // hollow ring with an orbiting pip
+      g.strokeStyle = flash ? '#fff' : color; g.lineWidth = 3.4; g.beginPath(); g.arc(0, 0, r * 0.8, 0, TAU); g.stroke();
+      const pa = (e.orbA || 0) * 3 + t * 4; g.fillStyle = flash ? '#fff' : color;
+      g.beginPath(); g.arc(Math.cos(pa) * r * 0.8, Math.sin(pa) * r * 0.8, r * 0.28, 0, TAU); g.fill();
+      break;
+    }
+    default:
+      neonStyle(g, color, flash, 2); g.beginPath(); g.arc(0, 0, r, 0, TAU); g.fill(); g.stroke();
+  }
 }
 function drawEnemy(e) {
   ctx.save(); ctx.translate(e.x, e.y);
-  const col = e.hitFlash > 0 ? '#ffffff' : e.color;
-  if (e.isBoss) {
-    ctx.fillStyle = 'rgba(255,60,80,.18)';
-    ctx.beginPath(); ctx.arc(0, 0, e.r * 1.5, 0, TAU); ctx.fill();
-  }
-  ctx.fillStyle = col;
-  ctx.beginPath();
-  if (e.type === 'brute' || e.isBoss) {
-    // hexagon
-    const sides = e.isBoss ? 8 : 6;
-    for (let i = 0; i < sides; i++) { const a = (i / sides) * TAU + runTime * 0.4; const px = Math.cos(a) * e.r, py = Math.sin(a) * e.r; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
-    ctx.closePath();
-  } else if (e.type === 'shooter') {
-    // triangle
-    for (let i = 0; i < 3; i++) { const a = (i / 3) * TAU - Math.PI / 2; const px = Math.cos(a) * e.r, py = Math.sin(a) * e.r; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
-    ctx.closePath();
-  } else if (e.type === 'splitter') {
-    ctx.rect(-e.r * 0.8, -e.r * 0.8, e.r * 1.6, e.r * 1.6);
-  } else {
-    ctx.arc(0, 0, e.r, 0, TAU);
-  }
-  ctx.fill();
-  ctx.fillStyle = 'rgba(0,0,0,.35)';
-  ctx.beginPath(); ctx.arc(0, 0, e.r * 0.35, 0, TAU); ctx.fill();
+  if (e.isBoss) { ctx.fillStyle = rgba(e.color, 0.14); ctx.beginPath(); ctx.arc(0, 0, e.r * 1.65, 0, TAU); ctx.fill(); }
+  drawEnemyShape(ctx, e);
   ctx.restore();
-  // boss hp bar
   if (e.isBoss) {
-    const w = 70, h = 6;
-    ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(e.x - w / 2, e.y - e.r - 16, w, h);
-    ctx.fillStyle = '#ff5b6a'; ctx.fillRect(e.x - w / 2, e.y - e.r - 16, w * clamp(e.hp / e.maxHP, 0, 1), h);
+    const w = 74, h = 6;
+    ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(e.x - w / 2, e.y - e.r - 18, w, h);
+    ctx.fillStyle = e.color; ctx.fillRect(e.x - w / 2, e.y - e.r - 18, w * clamp(e.hp / e.maxHP, 0, 1), h);
   }
 }
 function drawHeart(x, y, s) {
@@ -1070,10 +1144,13 @@ function renderEmbers() {
     else if (e.unlock.type === 'cinders') { tag = `<span class="ci-tag tag-locked">Locked</span>`; action = `<button class="ci-buy">Unlock ✦ ${e.unlock.cost}</button>`; }
     else tag = `<span class="ci-tag tag-locked">${e.unlock.label}</span>`;
     div.innerHTML = `
-      <div class="ci-head"><div class="ci-name"><span class="ic" style="color:${e.color}">${e.icon}</span>${e.name}</div></div>
+      <div class="ci-head"><div class="ci-name"><canvas class="portrait" width="96" height="96"></canvas>${e.name}</div></div>
       ${tag}
       <div class="ci-desc">${e.blurb}<br><span style="color:#8a806f">Weapon: ${w.icon} ${w.name}</span></div>
       ${action}`;
+    const pc = div.querySelector('.portrait'); const pg = pc.getContext('2d');
+    pg.setTransform(2, 0, 0, 2, 0, 0); // 96px backing / 48px css
+    drawEmber(pg, e.id, e.color, 24, 24, 13, 0.6, 0);
     if (owned) div.onclick = () => { save.selectedEmber = e.id; persist(); renderEmbers(); toast(e.name + ' selected'); };
     if (!owned && e.unlock.type === 'cinders') {
       div.querySelector('.ci-buy').onclick = ev => {
