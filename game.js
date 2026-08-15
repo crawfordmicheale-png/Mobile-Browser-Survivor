@@ -58,6 +58,9 @@ const FORGE = [
   { id:'momentum',    name:'Momentum',     icon:'📈', max:5, base:80,  desc:r=>`+${2*r}% damage per minute survived`,      eff:(p,r)=>{ p.momentumRate += .02*r; } },
   { id:'rebirth',     name:'Rebirth',      icon:'♻', max:3, base:150, desc:r=>`revive ${r} time${r>1?'s':''} per run`,    eff:(p,r)=>{ p.revives += r; } },
   { id:'headstart',   name:'Head Start',   icon:'🚀', max:5, base:90,  desc:r=>`begin with weapon at Lv ${1+r}`,           eff:(p,r)=>{ p.headStart += r; } },
+  { id:'insight',     name:'Foresight',    icon:'↻',  max:3, base:100, desc:r=>`+${r} reroll${r>1?'s':''} per run`,           eff:(p,r)=>{ p.rerolls += r; } },
+  { id:'persistence', name:'Persistence',  icon:'⌛', max:5, base:70,  desc:r=>`+${(0.4*r).toFixed(1)}s combo window`,       eff:(p,r)=>{ p.comboWindow += 0.4*r; } },
+  { id:'omen',        name:'Omen',         icon:'👁', max:4, base:85,  desc:r=>`events arrive ${15*r}% sooner`,            eff:(p,r)=>{ p.eventRate *= 1 + .15*r; } },
 ];
 const forgeCost = (f, rank) => Math.floor(f.base * Math.pow(1.7, rank));
 
@@ -74,6 +77,12 @@ const EMBERS = [
     blurb:'Arcing. +15% attack speed, +1 luck.', mods:p=>{ p.fireRateMult*=1.15; p.luck+=1; } },
   { id:'glutton', name:'The Glutton', icon:'◉', color:'#7be07b', weapon:'aura', unlock:{type:'cinders', cost:1200},
     blurb:'Hungry. +30% XP, +30% cinders, −15% damage.', mods:p=>{ p.xpMult*=1.3; p.greedMult*=1.3; p.damageMult*=.85; } },
+  { id:'pyre',    name:'The Pyre',    icon:'🔥', color:'#ff7a2b', weapon:'pyre', unlock:{type:'cinders', cost:1500},
+    blurb:'Scorched earth. +20% area, +10% damage, −10% move.', mods:p=>{ p.areaMult*=1.2; p.damageMult*=1.1; p.speed*=.9; } },
+  { id:'seeker',  name:'The Seeker',  icon:'✴', color:'#7fdcff', weapon:'seeker', unlock:{type:'achievement', id:'firstBlood', label:'First Blood — 100 kills in a run'},
+    blurb:'Homing. +20% pickup range, +10% projectile speed.', mods:p=>{ p.pickupRadius*=1.2; p.projSpeedMult*=1.1; } },
+  { id:'echo',    name:'The Echo',    icon:'⚔', color:'#ffe14d', weapon:'blade', unlock:{type:'achievement', id:'survivor15', label:'Survive 15:00'},
+    blurb:'Cleaving. +1 projectile, −5% attack speed.', mods:p=>{ p.extraProjectiles+=1; p.fireRateMult*=.95; } },
 ];
 
 const ACHIEVEMENTS = [
@@ -84,6 +93,10 @@ const ACHIEVEMENTS = [
   { id:'level20',    label:'Ascendant — reach Lv 20' },
   { id:'slayer',     label:'Slayer — 2000 lifetime kills' },
   { id:'warden',     label:'Dawnbringer — survive to 20:00' },
+  { id:'evolve1',    label:'Metamorphosis — evolve a weapon' },
+  { id:'elite10',    label:'Trophy Hunter — fell 10 elites in a run' },
+  { id:'streak50',   label:'Blazing — reach a 50 kill streak' },
+  { id:'relic3',     label:'Reliquary — open 3 chests in a run' },
 ];
 
 function freshSave() {
@@ -113,6 +126,10 @@ function load() {
     save.trials = save.trials || {};
     save.dailyBest = Object.assign(f.dailyBest, save.dailyBest);
     save.seen = save.seen || {};
+    // backfill ember unlocks from achievements already earned
+    EMBERS.forEach(e => {
+      if (e.unlock.type === 'achievement' && save.achievements[e.unlock.id]) save.embers[e.id] = true;
+    });
   } catch (e) { save = freshSave(); }
 }
 function persist() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) {} }
@@ -162,36 +179,50 @@ const WEAPONS = [
   { id:'pyre', name:'Cinder Field', icon:'🔥', maxLevel:8, weight:6,
     desc:'Drop burning ground that lingers.',
     cd:l=>Math.max(1, 2.2 - (l-1)*.12), dps:l=>16 + (l-1)*8, radius:l=>50 + (l-1)*6, life:3.2 },
+  { id:'seeker', name:'Seeker', icon:'✴', maxLevel:8, weight:7,
+    desc:'Homing sparks that chase the nearest foe.',
+    cd:l=>Math.max(.4, .95 - (l-1)*.06), dmg:l=>9 + (l-1)*5, count:l=>1 + Math.floor((l-1)/3),
+    speed:260, turn:l=>3.8 + (l-1)*0.45 },
+  { id:'blade', name:'Echo Blade', icon:'⚔', maxLevel:8, weight:7,
+    desc:'Crescent waves that carve through a wide arc.',
+    cd:l=>Math.max(.55, 1.45 - (l-1)*.09), dmg:l=>14 + (l-1)*7, count:l=>1 + Math.floor((l-1)/4),
+    speed:400 },
 ];
 const weaponById = id => WEAPONS.find(w => w.id === id);
 const MAX_WEAPONS = 6;
 
 const PASSIVES = [
-  { id:'p_damage',  name:'Kindling',   icon:'🔥', rar:'common', weight:9, desc:'+12% damage',        eff:p=>p.damageMult*=1.12 },
-  { id:'p_fire',    name:'Frenzy',     icon:'⚡', rar:'common', weight:9, desc:'+10% attack speed',  eff:p=>p.fireRateMult*=1.10 },
-  { id:'p_move',    name:'Fleetness',  icon:'👣', rar:'common', weight:7, desc:'+8% move speed',     eff:p=>p.speed*=1.08 },
-  { id:'p_hp',      name:'Fortitude',  icon:'❤', rar:'common', weight:8, desc:'+25 max life, heal', eff:p=>{p.maxHP+=25; p.hp=Math.min(p.maxHP,p.hp+25);} },
-  { id:'p_pickup',  name:'Draw',       icon:'🧲', rar:'common', weight:6, desc:'+25% pickup range',  eff:p=>p.pickupRadius*=1.25 },
-  { id:'p_xp',      name:'Insight',    icon:'✨', rar:'common', weight:6, desc:'+12% experience',    eff:p=>p.xpMult*=1.12 },
-  { id:'p_regen',   name:'Renewal',    icon:'🌿', rar:'rare',   weight:5, desc:'+0.5 life / sec',    eff:p=>p.regen+=0.5 },
-  { id:'p_crit',    name:'Focus',      icon:'🎯', rar:'rare',   weight:5, desc:'+6% crit chance',    eff:p=>p.critChance+=0.06 },
-  { id:'p_area',    name:'Expanse',    icon:'◎',  rar:'rare',   weight:5, desc:'+15% area',          eff:p=>p.areaMult*=1.15 },
-  { id:'p_pspeed',  name:'Velocity',   icon:'➤',  rar:'rare',   weight:4, desc:'+18% projectile speed', eff:p=>p.projSpeedMult*=1.18 },
-  { id:'p_armor',   name:'Ward',       icon:'🛡', rar:'rare',   weight:4, desc:'-1 damage taken',    eff:p=>p.armor+=1 },
-  { id:'p_proj',    name:'Split',      icon:'❖',  rar:'epic',   weight:3, desc:'+1 projectile',      eff:p=>p.extraProjectiles+=1 },
+  { id:'p_damage',  name:'Kindling',     icon:'🔥', rar:'common', weight:9, desc:'+12% damage',           eff:p=>p.damageMult*=1.12 },
+  { id:'p_fire',    name:'Frenzy',       icon:'⚡', rar:'common', weight:9, desc:'+10% attack speed',     eff:p=>p.fireRateMult*=1.10 },
+  { id:'p_move',    name:'Fleetness',    icon:'👣', rar:'common', weight:7, desc:'+8% move speed',        eff:p=>p.speed*=1.08 },
+  { id:'p_hp',      name:'Fortitude',    icon:'❤', rar:'common', weight:8, desc:'+25 max life, heal',    eff:p=>{p.maxHP+=25; p.hp=Math.min(p.maxHP,p.hp+25);} },
+  { id:'p_pickup',  name:'Draw',         icon:'🧲', rar:'common', weight:6, desc:'+25% pickup range',     eff:p=>p.pickupRadius*=1.25 },
+  { id:'p_xp',      name:'Insight',      icon:'✨', rar:'common', weight:6, desc:'+12% experience',       eff:p=>p.xpMult*=1.12 },
+  { id:'p_regen',   name:'Renewal',      icon:'🌿', rar:'rare',   weight:5, desc:'+0.5 life / sec',       eff:p=>p.regen+=0.5 },
+  { id:'p_crit',    name:'Focus',        icon:'🎯', rar:'rare',   weight:5, desc:'+6% crit chance',       eff:p=>p.critChance+=0.06 },
+  { id:'p_area',    name:'Expanse',      icon:'◎',  rar:'rare',   weight:5, desc:'+15% area',             eff:p=>p.areaMult*=1.15 },
+  { id:'p_pspeed',  name:'Velocity',     icon:'➤',  rar:'rare',   weight:4, desc:'+18% projectile speed', eff:p=>p.projSpeedMult*=1.18 },
+  { id:'p_armor',   name:'Ward',         icon:'🛡', rar:'rare',   weight:4, desc:'-1 damage taken',       eff:p=>p.armor+=1 },
+  { id:'p_vamp',    name:'Leech',        icon:'🩸', rar:'rare',   weight:4, desc:'+1 life on every kill', eff:p=>p.vamp+=1 },
+  { id:'p_thorns',  name:'Retort',       icon:'✦',  rar:'rare',   weight:4, desc:'Touchers take 8 damage',eff:p=>p.thorns+=8 },
+  { id:'p_combo',   name:'Tempo',        icon:'⌛', rar:'rare',   weight:4, desc:'+0.6s combo window',    eff:p=>p.comboWindow+=0.6 },
+  { id:'p_proj',    name:'Split',        icon:'❖',  rar:'epic',   weight:3, desc:'+1 projectile',         eff:p=>p.extraProjectiles+=1 },
+  { id:'p_reroll',  name:'Second Sight', icon:'↻',  rar:'epic',   weight:2, desc:'+1 reroll',             eff:p=>p.rerolls+=1 },
 ];
 const passiveById = id => PASSIVES.find(p => p.id === id);
 
 // Evolutions — a maxed weapon plus a matching passive unlocks an upgraded form.
 // The evolved form keeps the weapon's behaviour but hits far harder, in white-gold.
 const EVOLUTIONS = {
-  spark: { req:'p_damage', name:'Starfall',  color:'#fff2c0', desc:'The bolt splinters — piercing, relentless.' },
-  nova:  { req:'p_area',   name:'Supernova', color:'#ffd479', desc:'The burst swells into a devastating ring.' },
-  orbit: { req:'p_hp',     name:'Aegis',     color:'#fff2c0', desc:'The flames blaze wider and fiercer.' },
-  beam:  { req:'p_crit',   name:'Sunlance',  color:'#e8f4ff', desc:'A blinding lance that shears through all.' },
-  chain: { req:'p_fire',   name:'Tempest',   color:'#e8d0ff', desc:'The arc forks endlessly through the dark.' },
-  aura:  { req:'p_regen',  name:'Inferno',   color:'#ffb36a', desc:'The field becomes an all-consuming pyre.' },
-  pyre:  { req:'p_pickup', name:'Wildfire',  color:'#ff9a3c', desc:'The ground erupts into a lasting blaze.' },
+  spark:  { req:'p_damage', name:'Starfall',   color:'#fff2c0', desc:'The bolt splinters — piercing, relentless.' },
+  nova:   { req:'p_area',   name:'Supernova',  color:'#ffd479', desc:'The burst swells into a devastating ring.' },
+  orbit:  { req:'p_hp',     name:'Aegis',      color:'#fff2c0', desc:'The flames blaze wider and fiercer.' },
+  beam:   { req:'p_crit',   name:'Sunlance',   color:'#e8f4ff', desc:'A blinding lance that shears through all.' },
+  chain:  { req:'p_fire',   name:'Tempest',    color:'#e8d0ff', desc:'The arc forks endlessly through the dark.' },
+  aura:   { req:'p_regen',  name:'Inferno',    color:'#ffb36a', desc:'The field becomes an all-consuming pyre.' },
+  pyre:   { req:'p_pickup', name:'Wildfire',   color:'#ff9a3c', desc:'The ground erupts into a lasting blaze.' },
+  seeker: { req:'p_pspeed', name:'Comet',      color:'#b8f0ff', desc:'Seekers become blistering, piercing comets.' },
+  blade:  { req:'p_proj',   name:'Guillotine', color:'#ffe8a0', desc:'Crescents multiply into a storm of blades.' },
 };
 
 /* =====================================================================
@@ -211,17 +242,20 @@ let hitStop = 0, slowmo = 0, flash = 0;
 let combo = 0, comboT = 0, maxCombo = 0;
 let dailyMode = false;
 let seenRun = null;
-const defaultMods = () => ({ spawnRate:1, enemySpeed:1, enemyHp:1, bossRate:1, dmgTaken:1, cinderMult:1 });
+let comboCinders = 0, eliteKills = 0, chestsOpened = 0, eventTimer = 55, milestonesHit = {};
+const defaultMods = () => ({ spawnRate:1, enemySpeed:1, enemyHp:1, bossRate:1, dmgTaken:1, cinderMult:1, noHearts:false, eliteChance:1 });
 let runMods = defaultMods();
 
 // Trials — optional run modifiers that raise difficulty for more cinders.
 const TRIALS = [
-  { id:'swarm',   name:'Swarming Dark',    icon:'🌑', bonus:.15, desc:'Enemies spawn 60% faster.',     apply:(m)=>m.spawnRate*=1.6 },
-  { id:'frenzy',  name:'Frenzied',         icon:'💨', bonus:.15, desc:'Enemies move 30% faster.',       apply:(m)=>m.enemySpeed*=1.3 },
-  { id:'night',   name:'Endless Night',    icon:'🩸', bonus:.20, desc:'Enemies have 50% more life.',    apply:(m)=>m.enemyHp*=1.5 },
-  { id:'brittle', name:'Brittle Light',    icon:'🥀', bonus:.20, desc:'You have 30% less max life.',    apply:(m,p)=>p.maxHP*=0.7 },
-  { id:'glass',   name:'Glass',            icon:'💎', bonus:.25, desc:'You take double damage.',        apply:(m)=>m.dmgTaken*=2 },
-  { id:'wardens', name:'Relentless Wardens', icon:'☠', bonus:.20, desc:'Wardens arrive twice as often.', apply:(m)=>m.bossRate*=2 },
+  { id:'swarm',   name:'Swarming Dark',      icon:'🌑', bonus:.15, desc:'Enemies spawn 60% faster.',      apply:(m)=>m.spawnRate*=1.6 },
+  { id:'frenzy',  name:'Frenzied',           icon:'💨', bonus:.15, desc:'Enemies move 30% faster.',        apply:(m)=>m.enemySpeed*=1.3 },
+  { id:'night',   name:'Endless Night',      icon:'🩸', bonus:.20, desc:'Enemies have 50% more life.',     apply:(m)=>m.enemyHp*=1.5 },
+  { id:'brittle', name:'Brittle Light',      icon:'🥀', bonus:.20, desc:'You have 30% less max life.',     apply:(m,p)=>p.maxHP*=0.7 },
+  { id:'glass',   name:'Glass',              icon:'💎', bonus:.25, desc:'You take double damage.',         apply:(m)=>m.dmgTaken*=2 },
+  { id:'wardens', name:'Relentless Wardens', icon:'☠',  bonus:.20, desc:'Wardens arrive twice as often.',  apply:(m)=>m.bossRate*=2 },
+  { id:'famine',  name:'Hollow Famine',      icon:'🦴', bonus:.20, desc:'Hearts never drop.',              apply:(m)=>m.noHearts=true },
+  { id:'eclipse', name:'Eclipse',            icon:'🌘', bonus:.25, desc:'Elites appear twice as often.',   apply:(m)=>m.eliteChance=2 },
 ];
 const trialById = id => TRIALS.find(t => t.id === id);
 function trialCinderMult() { return 1 + TRIALS.reduce((s, t) => s + (save.trials && save.trials[t.id] ? t.bonus : 0), 0); }
@@ -236,6 +270,8 @@ function baseStats() {
     pickupRadius:82, xpMult:1, greedMult:1,
     armor:0, regen:0, extraProjectiles:0, areaMult:1, projSpeedMult:1,
     luck:0, momentumRate:0, revives:0, headStart:0,
+    comboWindow:2.6, eventRate:1, vamp:0, thorns:0,
+    magnetT:0, furyT:0,
     invuln:0, level:1, xp:0, xpNext:6, rerolls:2, dmgFlash:0, face:0,
     weapons:{}, passives:{},
   };
@@ -273,6 +309,7 @@ function startRun() {
   runTime = 0; spawnTimer = .3; bossTimer = 180 / runMods.bossRate; killCount = 0; bossKills = 0; bossCount = 0;
   shake = 0; levelQueue = 0; runCinders = 0; hasWon = false; runUnlocks = []; lastTimerSec = -1;
   hitStop = 0; slowmo = 0; flash = 0; combo = 0; comboT = 0; maxCombo = 0; seenRun = {};
+  comboCinders = 0; eliteKills = 0; chestsOpened = 0; eventTimer = 55; milestonesHit = {};
   // opening cluster so the swarm is on you quickly
   const r0 = Math.min(W, H) * 0.42 + 30;
   for (let i = 0; i < 5; i++) { const a = (i / 5) * TAU + rand(-.3, .3); spawnEnemy('drifter', player.x + Math.cos(a) * r0, player.y + Math.sin(a) * r0, 1); }
@@ -390,6 +427,8 @@ const ENEMY_INFO = {
   mini:     { name:'Cell',     color:'#a6ff7a', desc:'A fragment shed by a Divider. Small, but swift.' },
   dasher:   { name:'Lancer',   color:'#ffe14d', desc:'Winds up, then charges in a straight, sudden lunge. Sidestep the dash.' },
   bomber:   { name:'Igniter',  color:'#ff7a2b', desc:'Bloated with fire — on death it bursts into a ring of bolts. Kill it at range.' },
+  shade:    { name:'Shade',    color:'#a8b0d0', desc:'A flickering phantom that blinks closer when pressed. Hard to keep at bay.' },
+  nest:     { name:'Nest',     color:'#5cd48a', desc:'A crawling brood-sac that sheds Cells as it closes in.' },
   boss:     { name:'Warden',   color:'#ff2d55', desc:'A great construct of the dark that rises now and then. Fells it for a bounty of cinders.' },
   boss2:    { name:'Devourer', color:'#c23bff', desc:'An elite maw that spits aimed volleys and summons the swarm. Alternates with the Warden.' },
 };
@@ -403,9 +442,11 @@ function enemyTypesForTime(min) {
   if (min >= 4)   t.push('splitter');
   if (min >= 5)   t.push('bomber');
   if (min >= 6)   t.push('orbiter');
+  if (min >= 7)   t.push('shade');
+  if (min >= 8.5) t.push('nest');
   return t;
 }
-function spawnEnemy(type, x, y, scale) {
+function spawnEnemy(type, x, y, scale, asElite) {
   const base = {
     drifter:  { hp:16, r:14, speed:74, dmg:6,  xp:1, kind:'chase' },
     swarm:    { hp:8,  r:9,  speed:118,dmg:5,  xp:1, kind:'chase' },
@@ -416,6 +457,8 @@ function spawnEnemy(type, x, y, scale) {
     mini:     { hp:16, r:10, speed:86, dmg:6,  xp:1, kind:'chase' },
     dasher:   { hp:40, r:15, speed:56, dmg:14, xp:3, kind:'dash', dashT:rand(.6,1.6) },
     bomber:   { hp:54, r:18, speed:46, dmg:10, xp:4, kind:'bomb' },
+    shade:    { hp:48, r:15, speed:78, dmg:11, xp:5, kind:'shade', blinkT:rand(1.0,2.2) },
+    nest:     { hp:150,r:24, speed:30, dmg:12, xp:8, kind:'nest', spawnT:2.4 },
   }[type];
   const e = Object.assign({}, base, {
     type, x, y, color: ENEMY_INFO[type].color,
@@ -424,6 +467,16 @@ function spawnEnemy(type, x, y, scale) {
   });
   e.speed *= runMods.enemySpeed;
   e.hp = e.maxHP;
+  if (asElite && type !== 'mini') {
+    e.elite = true;
+    e.maxHP = Math.floor(e.maxHP * 2.8);
+    e.hp = e.maxHP;
+    e.r *= 1.22;
+    e.xp = Math.ceil(e.xp * 4);
+    e.speed *= 1.08;
+    e.dmg = Math.ceil(e.dmg * 1.25);
+    e.color = '#ffd479';
+  }
   if (seenRun && type !== 'mini') seenRun[type] = true;
   enemies.push(e);
   return e;
@@ -443,9 +496,12 @@ function doSpawn() {
       spawnEnemy('swarm', cx + rand(-40, 40), cy + rand(-40, 40), scale);
     return;
   }
+  const eliteOdds = (min >= 2 ? 0.11 : 0) * (runMods.eliteChance || 1);
   for (let i = 0; i < batch; i++) {
     const a = rand(0, TAU);
-    spawnEnemy(pick(types), player.x + Math.cos(a) * rad, player.y + Math.sin(a) * rad, scale);
+    const type = pick(types);
+    const elite = type !== 'swarm' && rngSrc() < eliteOdds;
+    spawnEnemy(type, player.x + Math.cos(a) * rad, player.y + Math.sin(a) * rad, scale, elite);
   }
 }
 function spawnBoss() {
@@ -474,6 +530,76 @@ function foeBullet(x, y, ang, spd, dmg) {
 }
 
 /* =====================================================================
+   WORLD EVENTS — chests, elite hunts, ember storms, timed milestones
+   ===================================================================== */
+function spawnChest(x, y) {
+  drops.push({ x, y, r: 14, type: 'chest', bob: 0, life: 40 });
+}
+function spawnWorldEvent() {
+  const roll = rngSrc();
+  if (roll < 0.42) {
+    const a = rand(0, TAU), rad = Math.min(W, H) * 0.38;
+    spawnChest(player.x + Math.cos(a) * rad, player.y + Math.sin(a) * rad);
+    toast('A Reliquary appears');
+  } else if (roll < 0.72) {
+    const min = runTime / 60;
+    const scale = 1 + min * 0.55 + save.ascension * 0.15;
+    const types = enemyTypesForTime(min).filter(t => t !== 'swarm');
+    toast('Elite hunt!');
+    for (let i = 0; i < 3; i++) {
+      const a = rand(0, TAU), rad = spawnRadius() * 0.85;
+      spawnEnemy(pick(types.length ? types : ['brute']), player.x + Math.cos(a) * rad, player.y + Math.sin(a) * rad, scale, true);
+    }
+  } else {
+    toast('Ember storm');
+    player.magnetT = Math.max(player.magnetT, 6);
+    for (let i = 0; i < 18; i++) {
+      const a = rand(0, TAU), rad = rand(40, 220);
+      dropMote(player.x + Math.cos(a) * rad, player.y + Math.sin(a) * rad, randi(1, 3));
+    }
+    burst(player.x, player.y, '#5ec8ff', 24, 200, .8);
+  }
+}
+function triggerMilestone(sec) {
+  const label = sec === 300 ? '5:00' : sec === 600 ? '10:00' : '15:00';
+  toast(label + ' — the light holds');
+  player.magnetT = Math.max(player.magnetT, 4);
+  const bonus = Math.floor((12 + sec / 30) * player.greedMult * runMods.cinderMult);
+  comboCinders += bonus;
+  popup(player.x, player.y - 40, '+' + bonus + ' ✦', '#ffd479', 1.2);
+  for (let i = 0; i < 8; i++) dropMote(player.x + rand(-80, 80), player.y + rand(-80, 80), 3);
+}
+function openChest() {
+  chestsOpened++;
+  if (chestsOpened >= 3) grantAchievement('relic3');
+  const roll = rngSrc();
+  if (roll < 0.34) {
+    // free level-up choice
+    levelQueue++;
+    toast('Reliquary — choose a gift');
+    if (state === 'playing') openLevelUp();
+  } else if (roll < 0.58) {
+    player.furyT = Math.max(player.furyT, 8);
+    toast('Fury kindled!');
+    burst(player.x, player.y, '#ff6a2b', 28, 240, .9);
+  } else if (roll < 0.78) {
+    player.magnetT = Math.max(player.magnetT, 10);
+    toast('Drawn to the light');
+    for (const m of motes) m.pull = true;
+  } else {
+    if (!runMods.noHearts) {
+      player.hp = Math.min(player.maxHP, player.hp + player.maxHP * 0.45);
+      toast('+life');
+    } else {
+      const bonus = Math.floor(20 * player.greedMult * runMods.cinderMult);
+      comboCinders += bonus;
+      popup(player.x, player.y - 28, '+' + bonus + ' ✦', '#ffd479', 1.1);
+    }
+  }
+  sfx.buy();
+}
+
+/* =====================================================================
    DAMAGE + XP
    ===================================================================== */
 function critRoll(base) {
@@ -497,8 +623,10 @@ function hurtEnemy(e, dmg, crit, kbx, kby, popup) {
 function killEnemy(e) {
   e.dead = true;
   killCount++;
-  combo++; comboT = 2.6; if (combo > maxCombo) maxCombo = combo;
-  burst(e.x, e.y, e.color, e.isBoss ? 40 : 8, e.isBoss ? 260 : 150, e.isBoss ? .9 : .5);
+  combo++; comboT = player.comboWindow; if (combo > maxCombo) maxCombo = combo;
+  if (combo >= 50) grantAchievement('streak50');
+  if (player.vamp > 0) player.hp = Math.min(player.maxHP, player.hp + player.vamp);
+  burst(e.x, e.y, e.color, e.isBoss ? 40 : (e.elite ? 18 : 8), e.isBoss ? 260 : 150, e.isBoss ? .9 : .5);
   // splitter
   if (e.kind === 'split') {
     const scale = 1 + (runTime / 60) * 0.55;
@@ -514,7 +642,7 @@ function killEnemy(e) {
   const val = e.xp || 1;
   if (e.isBoss) {
     for (let i = 0; i < 14; i++) dropMote(e.x + rand(-30, 30), e.y + rand(-30, 30), 4);
-    drops.push({ x: e.x, y: e.y, r: 12, type: 'heart', bob: 0 });
+    if (!runMods.noHearts) drops.push({ x: e.x, y: e.y, r: 12, type: 'heart', bob: 0 });
     bossKills++;
     // big juice: screen flash, slow-mo, a cinder popup
     shake = Math.max(shake, 14); hitStop = Math.max(hitStop, 0.1); slowmo = Math.max(slowmo, 0.7); flash = 1;
@@ -523,10 +651,25 @@ function killEnemy(e) {
     toast((e.type === 'boss2' ? 'Devourer' : 'Warden') + ' felled  ✦');
   } else {
     dropMote(e.x, e.y, val);
-    if (rngSrc() < 0.012) drops.push({ x: e.x, y: e.y, r: 11, type: 'heart', bob: 0 });
+    if (!runMods.noHearts && rngSrc() < (e.elite ? 0.08 : 0.012)) drops.push({ x: e.x, y: e.y, r: 11, type: 'heart', bob: 0 });
   }
-  // streak milestone flourish
-  if (combo > 0 && combo % 25 === 0) popup(player.x, player.y - 30, combo + ' streak!', '#ffd479', 1);
+  if (e.elite) {
+    eliteKills++;
+    if (eliteKills >= 10) grantAchievement('elite10');
+    for (let i = 0; i < 3; i++) dropMote(e.x + rand(-20, 20), e.y + rand(-20, 20), 3);
+    if (rngSrc() < 0.55) spawnChest(e.x, e.y);
+    else {
+      const bonus = Math.floor(8 * player.greedMult * runMods.cinderMult);
+      comboCinders += bonus;
+      popup(e.x, e.y - e.r, '+' + bonus + ' ✦', '#ffd479', 1);
+    }
+  }
+  // streak milestone: bonus cinders mid-run
+  if (combo > 0 && combo % 10 === 0) {
+    const bonus = Math.floor((2 + combo * 0.25) * player.greedMult * runMods.cinderMult);
+    comboCinders += bonus;
+    popup(player.x, player.y - 30, '+' + bonus + ' ✦  ' + combo + '!', '#ffd479', 1);
+  }
 }
 function popup(x, y, text, color, big) {
   if (popups.length > 12) return;
@@ -571,11 +714,14 @@ function nearestEnemy(x, y, maxD) {
   for (const e of enemies) { const d = dist2(x, y, e.x, e.y); if (d < bd) { bd = d; best = e; } }
   return best;
 }
-function spawnShot(x, y, ang, spd, dmg, r, pierce, color, crit, kind) {
-  shots.push({ x, y, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, dmg, r, pierce, color, crit, life: 2.4, hit: null, kind });
+function spawnShot(x, y, ang, spd, dmg, r, pierce, color, crit, kind, extra) {
+  const s = { x, y, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, dmg, r, pierce, color, crit, life: 2.4, hit: null, kind };
+  if (extra) Object.assign(s, extra);
+  shots.push(s);
 }
 function updateWeapons(dt) {
-  const dm = player.damageMult * momentumMult();
+  const dm = player.damageMult * momentumMult() * (player.furyT > 0 ? 1.35 : 1);
+  const fr = player.fireRateMult * (player.furyT > 0 ? 1.25 : 1);
   for (const id in player.weapons) {
     const st = player.weapons[id]; const w = weaponById(id); const l = st.level; const evo = !!st.evolved;
     st.cd -= dt;
@@ -583,7 +729,7 @@ function updateWeapons(dt) {
       if (st.cd <= 0) {
         const t = nearestEnemy(player.x, player.y);
         if (t) {
-          st.cd = w.cd(l) / player.fireRateMult * (evo ? 0.72 : 1);
+          st.cd = w.cd(l) / fr * (evo ? 0.72 : 1);
           const n = w.count(l) + player.extraProjectiles + (evo ? 1 : 0);
           const baseA = Math.atan2(t.y - player.y, t.x - player.x);
           for (let i = 0; i < n; i++) {
@@ -595,7 +741,7 @@ function updateWeapons(dt) {
       }
     } else if (id === 'nova') {
       if (st.cd <= 0) {
-        st.cd = w.cd(l) / player.fireRateMult * (evo ? 0.85 : 1);
+        st.cd = w.cd(l) / fr * (evo ? 0.85 : 1);
         const n = w.count(l) + player.extraProjectiles + (evo ? 4 : 0);
         for (let i = 0; i < n; i++) {
           const a = (i / n) * TAU;
@@ -607,7 +753,7 @@ function updateWeapons(dt) {
       if (st.cd <= 0) {
         const t = nearestEnemy(player.x, player.y);
         if (t) {
-          st.cd = w.cd(l) / player.fireRateMult * (evo ? 0.8 : 1);
+          st.cd = w.cd(l) / fr * (evo ? 0.8 : 1);
           const n = w.count(l) + player.extraProjectiles + (evo ? 1 : 0);
           const baseA = Math.atan2(t.y - player.y, t.x - player.x);
           for (let i = 0; i < n; i++) {
@@ -622,7 +768,7 @@ function updateWeapons(dt) {
       if (st.cd <= 0) {
         const t = nearestEnemy(player.x, player.y, 360);
         if (t) {
-          st.cd = w.cd(l) / player.fireRateMult * (evo ? 0.8 : 1);
+          st.cd = w.cd(l) / fr * (evo ? 0.8 : 1);
           let from = { x: player.x, y: player.y }, cur = t;
           const hitSet = new Set(); const jumps = w.jumps(l) + player.extraProjectiles + (evo ? 3 : 0);
           for (let j = 0; j < jumps && cur; j++) {
@@ -640,8 +786,40 @@ function updateWeapons(dt) {
       }
     } else if (id === 'pyre') {
       if (st.cd <= 0) {
-        st.cd = w.cd(l) / player.fireRateMult * (evo ? 0.8 : 1);
+        st.cd = w.cd(l) / fr * (evo ? 0.8 : 1);
         zones.push({ x: player.x, y: player.y, r: w.radius(l) * player.areaMult * (evo ? 1.3 : 1), dps: w.dps(l) * dm * (evo ? 1.8 : 1), life: w.life, max: w.life, color: evo ? EVOLUTIONS.pyre.color : '#ff6a2b' });
+      }
+    } else if (id === 'seeker') {
+      if (st.cd <= 0) {
+        const t = nearestEnemy(player.x, player.y);
+        if (t) {
+          st.cd = w.cd(l) / fr * (evo ? 0.75 : 1);
+          const n = w.count(l) + player.extraProjectiles + (evo ? 2 : 0);
+          const baseA = Math.atan2(t.y - player.y, t.x - player.x);
+          for (let i = 0; i < n; i++) {
+            const off = (i - (n - 1) / 2) * 0.35 + rand(-0.1, 0.1);
+            const c = critRoll(w.dmg(l) * dm * (evo ? 1.65 : 1));
+            spawnShot(player.x, player.y, baseA + off, w.speed * player.projSpeedMult * (evo ? 1.15 : 1), c.d,
+              5.5 * player.areaMult * (evo ? 1.25 : 1), evo ? 2 : 0, evo ? EVOLUTIONS.seeker.color : '#7fdcff', c.crit, 'seeker',
+              { homing: true, turn: w.turn(l) * (evo ? 1.4 : 1), life: 2.8 });
+          }
+        }
+      }
+    } else if (id === 'blade') {
+      if (st.cd <= 0) {
+        const t = nearestEnemy(player.x, player.y);
+        if (t || player.face !== undefined) {
+          st.cd = w.cd(l) / fr * (evo ? 0.78 : 1);
+          const n = w.count(l) + player.extraProjectiles + (evo ? 2 : 0);
+          const baseA = t ? Math.atan2(t.y - player.y, t.x - player.x) : (player.face || 0);
+          for (let i = 0; i < n; i++) {
+            const off = (i - (n - 1) / 2) * 0.28;
+            const c = critRoll(w.dmg(l) * dm * (evo ? 1.75 : 1));
+            spawnShot(player.x, player.y, baseA + off, w.speed * player.projSpeedMult, c.d,
+              10 * player.areaMult * (evo ? 1.35 : 1), evo ? 4 : 2, evo ? EVOLUTIONS.blade.color : '#ffe14d', c.crit, 'blade',
+              { life: 1.0, hit: new Set() });
+          }
+        }
       }
     }
     // 'orbit' and 'aura' handled continuously below
@@ -708,6 +886,18 @@ function update(dt) {
   if (spawnTimer <= 0) { spawnTimer = interval; doSpawn(); }
   bossTimer -= dt;
   if (bossTimer <= 0) { bossTimer = 180 / runMods.bossRate; spawnBoss(); }
+  // world events + milestones
+  eventTimer -= dt * player.eventRate;
+  if (eventTimer <= 0) { eventTimer = rand(68, 98); spawnWorldEvent(); }
+  [300, 600, 900].forEach(t => {
+    if (runTime >= t && !milestonesHit[t]) { milestonesHit[t] = true; triggerMilestone(t); }
+  });
+  // temporary buffs
+  if (player.magnetT > 0) {
+    player.magnetT -= dt;
+    for (const m of motes) m.pull = true;
+  }
+  if (player.furyT > 0) player.furyT -= dt;
   // combo decay
   if (comboT > 0) { comboT -= dt; if (comboT <= 0) combo = 0; }
 
@@ -748,6 +938,26 @@ function update(dt) {
       }
     } else if (e.kind === 'bomb') {
       e.x += Math.cos(ang) * e.speed * dt; e.y += Math.sin(ang) * e.speed * dt;
+    } else if (e.kind === 'shade') {
+      e.blinkT -= dt;
+      e.aim = ang;
+      if (e.blinkT <= 0 && d > 70) {
+        const jump = Math.min(140, d * 0.55);
+        e.x += Math.cos(ang) * jump; e.y += Math.sin(ang) * jump;
+        e.blinkT = rand(1.1, 2.0);
+        e.hitFlash = 0.12;
+        burst(e.x, e.y, e.color, 6, 80, .35);
+      } else {
+        e.x += Math.cos(ang) * e.speed * 0.7 * dt; e.y += Math.sin(ang) * e.speed * 0.7 * dt;
+      }
+    } else if (e.kind === 'nest') {
+      e.x += Math.cos(ang) * e.speed * dt; e.y += Math.sin(ang) * e.speed * dt;
+      e.spawnT -= dt;
+      if (e.spawnT <= 0) {
+        e.spawnT = 2.6;
+        const sc = 1 + (runTime / 60) * 0.55;
+        spawnEnemy('mini', e.x + rand(-18, 18), e.y + rand(-18, 18), sc * 0.75);
+      }
     } else if (e.kind === 'boss') {
       e.x += Math.cos(ang) * e.speed * dt; e.y += Math.sin(ang) * e.speed * dt;
       e.fireT -= dt; e.spiralA += dt * 2.2;
@@ -768,8 +978,10 @@ function update(dt) {
     }
     // contact damage
     if (d < e.r + player.r) {
-      // separate a touch
-      if (e.touchCd <= 0) { hurtPlayer(e.dmg); e.touchCd = 0.7; }
+      if (e.touchCd <= 0) {
+        hurtPlayer(e.dmg); e.touchCd = 0.7;
+        if (player.thorns > 0 && !e.dead) hurtEnemy(e, player.thorns, false, undefined, undefined, true);
+      }
     }
     // cull far strays (rare, keeps arena tight)
     if (dist2(e.x, e.y, player.x, player.y) > (halfDiag * 2.2) ** 2) e.dead = true;
@@ -778,6 +990,18 @@ function update(dt) {
 
   // player shots
   for (const s of shots) {
+    if (s.homing) {
+      const t = nearestEnemy(s.x, s.y, 420);
+      if (t) {
+        const desired = Math.atan2(t.y - s.y, t.x - s.x);
+        let cur = Math.atan2(s.vy, s.vx), diff = desired - cur;
+        while (diff > Math.PI) diff -= TAU; while (diff < -Math.PI) diff += TAU;
+        const turn = (s.turn || 4) * dt;
+        const na = cur + clamp(diff, -turn, turn);
+        const spd = Math.hypot(s.vx, s.vy) || 1;
+        s.vx = Math.cos(na) * spd; s.vy = Math.sin(na) * spd;
+      }
+    }
     s.x += s.vx * dt; s.y += s.vy * dt; s.life -= dt;
     for (const e of enemies) {
       if (s.hit && s.hit.has && s.hit.has(e)) continue;
@@ -785,7 +1009,8 @@ function update(dt) {
         const kb = s.beam ? 0 : 6;
         hurtEnemy(e, s.dmg, s.crit, Math.cos(Math.atan2(s.vy, s.vx)) * kb, Math.sin(Math.atan2(s.vy, s.vx)) * kb, true);
         burst(s.x, s.y, s.color, 2, 90, .25);
-        if (s.pierce === 999) { if (s.hit) s.hit.add(e); }
+        if (s.hit && s.hit.add) s.hit.add(e);
+        if (s.pierce === 999) { /* infinite pierce */ }
         else if (s.pierce > 0) { s.pierce--; }
         else { s.dead = true; break; }
       }
@@ -817,11 +1042,13 @@ function update(dt) {
   }
   motes = motes.filter(m => !m.dead && m.life > 0);
 
-  // drops (hearts)
+  // drops (hearts, chests)
   for (const dp of drops) {
     dp.bob += dt;
+    if (dp.life !== undefined) { dp.life -= dt; if (dp.life <= 0) dp.dead = true; }
     if (dist2(dp.x, dp.y, player.x, player.y) < (player.r + dp.r + 6) ** 2) {
       if (dp.type === 'heart') { player.hp = Math.min(player.maxHP, player.hp + player.maxHP * 0.3); toast('+life'); }
+      else if (dp.type === 'chest') openChest();
       dp.dead = true;
     }
   }
@@ -887,9 +1114,17 @@ function draw() {
 
     // drops
     for (const dp of drops) {
-      ctx.fillStyle = '#ff6b8a';
       const s = 1 + Math.sin(dp.bob * 4) * 0.12;
-      drawHeart(dp.x, dp.y, dp.r * s);
+      if (dp.type === 'chest') {
+        ctx.save(); ctx.translate(dp.x, dp.y); ctx.scale(s, s);
+        ctx.fillStyle = rgba('#ffd479', 0.2); ctx.beginPath(); ctx.arc(0, 0, dp.r * 1.6, 0, TAU); ctx.fill();
+        ctx.fillStyle = '#ffd479'; roundRect(ctx, -10, -8, 20, 16, 3); ctx.fill();
+        ctx.fillStyle = '#fff6e0'; ctx.fillRect(-3, -3, 6, 6);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = '#ff6b8a';
+        drawHeart(dp.x, dp.y, dp.r * s);
+      }
     }
 
     // enemies
@@ -929,6 +1164,19 @@ function draw() {
         roundRect(ctx, -15, -s.r, 30, s.r * 2, s.r); ctx.fill();
       } else if (s.kind === 'spark') {
         ctx.beginPath(); ctx.moveTo(s.r * 1.6, 0); ctx.lineTo(0, s.r); ctx.lineTo(-s.r * 1.1, 0); ctx.lineTo(0, -s.r); ctx.closePath(); ctx.fill();
+      } else if (s.kind === 'seeker') {
+        ctx.beginPath(); ctx.arc(0, 0, s.r, 0, TAU); ctx.fill();
+        ctx.strokeStyle = rgba(col, 0.7); ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(0, 0, s.r * 1.55, -0.8, 0.8); ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.beginPath(); ctx.arc(s.r * 0.15, 0, s.r * 0.35, 0, TAU); ctx.fill();
+      } else if (s.kind === 'blade') {
+        ctx.beginPath();
+        ctx.moveTo(s.r * 1.4, 0);
+        ctx.quadraticCurveTo(0, s.r * 1.1, -s.r * 0.9, s.r * 0.35);
+        ctx.lineTo(-s.r * 0.5, 0);
+        ctx.lineTo(-s.r * 0.9, -s.r * 0.35);
+        ctx.quadraticCurveTo(0, -s.r * 1.1, s.r * 1.4, 0);
+        ctx.closePath(); ctx.fill();
       } else { // nova / default — glowing orb with hot core
         ctx.beginPath(); ctx.arc(0, 0, s.r, 0, TAU); ctx.fill();
         ctx.fillStyle = 'rgba(255,255,255,.72)'; ctx.beginPath(); ctx.arc(0, 0, s.r * 0.45, 0, TAU); ctx.fill();
@@ -1055,6 +1303,28 @@ function drawEmber(g, id, color, x, y, r, t, face) {
     const pulse = 0.55 + Math.sin(t * 3) * 0.12;
     g.strokeStyle = color; g.lineWidth = r * 0.32; g.beginPath(); g.arc(0, 0, r * 0.92, 0, TAU); g.stroke();
     g.fillStyle = W_; g.beginPath(); g.arc(0, 0, r * pulse, 0, TAU); g.fill();
+  } else if (id === 'pyre') {
+    g.fillStyle = color;
+    for (let i = -1; i <= 1; i++) {
+      g.beginPath(); g.moveTo(i * r * 0.35, r * 0.55);
+      g.quadraticCurveTo(i * r * 0.55, -r * 0.1, i * r * 0.1, -r * 1.15);
+      g.quadraticCurveTo(i * r * 0.05 + r * 0.2, -r * 0.2, i * r * 0.35, r * 0.55);
+      g.fill();
+    }
+    g.fillStyle = W_; g.beginPath(); g.arc(0, r * 0.2, r * 0.42, 0, TAU); g.fill();
+  } else if (id === 'seeker') {
+    g.strokeStyle = color; g.lineWidth = 2.5;
+    for (let i = 0; i < 3; i++) {
+      const a = t * 1.4 + i / 3 * TAU;
+      g.beginPath(); g.arc(Math.cos(a) * r * 1.15, Math.sin(a) * r * 1.15, r * 0.22, 0, TAU); g.stroke();
+    }
+    g.fillStyle = W_; g.beginPath(); g.arc(0, 0, r * 0.7, 0, TAU); g.fill();
+    g.fillStyle = color; g.beginPath(); g.arc(0, 0, r * 0.32, 0, TAU); g.fill();
+  } else if (id === 'echo') {
+    g.strokeStyle = color; g.lineWidth = 3;
+    g.beginPath(); g.arc(0, 0, r * 1.05, -1.1, 1.1); g.stroke();
+    g.beginPath(); g.arc(0, 0, r * 0.7, Math.PI - 1.0, Math.PI + 1.0); g.stroke();
+    g.fillStyle = W_; g.beginPath(); g.arc(0, 0, r * 0.42, 0, TAU); g.fill();
   } else { // spark (default) — four-point star
     g.fillStyle = color; star(g, 4, r * 1.28, r * 0.46, t * 0.7); g.fill();
     g.fillStyle = W_; g.beginPath(); g.arc(0, 0, r * 0.6, 0, TAU); g.fill();
@@ -1143,17 +1413,40 @@ function drawEnemyShape(g, e) {
       g.beginPath(); g.arc(Math.cos(pa) * r * 0.8, Math.sin(pa) * r * 0.8, r * 0.28, 0, TAU); g.fill();
       break;
     }
+    case 'shade': { // flickering diamond phantom
+      neonStyle(g, color, flash, 2);
+      g.globalAlpha = 0.55 + Math.sin(t * 6) * 0.25;
+      star(g, 4, r * 1.1, r * 0.45, t * 1.5); g.fill(); g.stroke();
+      g.globalAlpha = 1;
+      g.fillStyle = flash ? '#fff' : rgba(color, 0.7); g.beginPath(); g.arc(0, 0, r * 0.22, 0, TAU); g.fill();
+      break;
+    }
+    case 'nest': { // lumpy brood sac with pores
+      neonStyle(g, color, flash, 2.5);
+      g.save(); g.scale(1.05, 0.85); g.beginPath(); g.arc(0, 0, r, 0, TAU); g.fill(); g.stroke(); g.restore();
+      g.fillStyle = flash ? '#fff' : rgba(color, 0.85);
+      for (let i = 0; i < 5; i++) {
+        const a = t * 0.4 + i / 5 * TAU;
+        g.beginPath(); g.arc(Math.cos(a) * r * 0.45, Math.sin(a) * r * 0.35, r * 0.16, 0, TAU); g.fill();
+      }
+      break;
+    }
     default:
       neonStyle(g, color, flash, 2); g.beginPath(); g.arc(0, 0, r, 0, TAU); g.fill(); g.stroke();
   }
 }
 function drawEnemy(e) {
   ctx.save(); ctx.translate(e.x, e.y);
-  if (e.isBoss) { ctx.fillStyle = rgba(e.color, 0.14); ctx.beginPath(); ctx.arc(0, 0, e.r * 1.65, 0, TAU); ctx.fill(); }
+  if (e.isBoss || e.elite) { ctx.fillStyle = rgba(e.color, e.elite ? 0.18 : 0.14); ctx.beginPath(); ctx.arc(0, 0, e.r * (e.elite ? 1.45 : 1.65), 0, TAU); ctx.fill(); }
   drawEnemyShape(ctx, e);
+  if (e.elite && !e.isBoss) {
+    ctx.strokeStyle = '#ffd479'; ctx.lineWidth = 2; ctx.globalAlpha = 0.7;
+    ctx.beginPath(); ctx.arc(0, 0, e.r * 1.25, 0, TAU); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
   ctx.restore();
-  if (e.isBoss) {
-    const w = 74, h = 6;
+  if (e.isBoss || e.elite) {
+    const w = e.isBoss ? 74 : 44, h = 6;
     ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(e.x - w / 2, e.y - e.r - 18, w, h);
     ctx.fillStyle = e.color; ctx.fillRect(e.x - w / 2, e.y - e.r - 18, w * clamp(e.hp / e.maxHP, 0, 1), h);
   }
@@ -1204,6 +1497,17 @@ function drawWeaponPortrait(g, id, x, y, r) {
     g.fillStyle = rgba('#ff6a2b', .25); g.beginPath(); g.arc(0, r * 0.35, r * 0.9, 0, TAU); g.fill();
     g.fillStyle = '#ff9a3c';
     for (let i = -1; i <= 1; i++) { const cx = i * r * 0.42; g.beginPath(); g.moveTo(cx, r * 0.35); g.quadraticCurveTo(cx - r * 0.14, -r * 0.15, cx, -r * 0.6); g.quadraticCurveTo(cx + r * 0.2, -r * 0.1, cx, r * 0.35); g.fill(); }
+  } else if (id === 'seeker') {
+    g.fillStyle = '#7fdcff';
+    for (let i = 0; i < 3; i++) {
+      const a = t * 1.2 + i / 3 * TAU;
+      g.beginPath(); g.arc(Math.cos(a) * r * 0.7, Math.sin(a) * r * 0.7, r * 0.22, 0, TAU); g.fill();
+    }
+    g.fillStyle = '#fff6e0'; g.beginPath(); g.arc(0, 0, r * 0.28, 0, TAU); g.fill();
+  } else if (id === 'blade') {
+    g.fillStyle = '#ffe14d';
+    g.beginPath(); g.moveTo(r * 1.1, 0); g.quadraticCurveTo(0, r * 0.9, -r * 0.8, r * 0.25);
+    g.lineTo(-r * 0.35, 0); g.lineTo(-r * 0.8, -r * 0.25); g.quadraticCurveTo(0, -r * 0.9, r * 1.1, 0); g.fill();
   }
   g.restore();
 }
@@ -1225,11 +1529,11 @@ function updateHUD() {
   el('hpfill').style.width = hpp * 100 + '%';
   el('hptext').textContent = Math.ceil(Math.max(0, player.hp)) + ' / ' + player.maxHP;
   const cel = el('combo');
-  if (combo >= 3) { cel.classList.remove('hidden'); cel.textContent = '✦ ' + combo + ' streak'; cel.style.opacity = clamp(comboT / 2.6, 0.3, 1); }
+  if (combo >= 3) { cel.classList.remove('hidden'); cel.textContent = '✦ ' + combo + ' streak'; cel.style.opacity = clamp(comboT / player.comboWindow, 0.3, 1); }
   else cel.classList.add('hidden');
 }
 function computeCinders() {
-  const base = runTime * 0.6 + killCount * 0.45 + player.level * 5 + bossKills * 45 + maxCombo * 2;
+  const base = runTime * 0.6 + killCount * 0.45 + player.level * 5 + bossKills * 45 + maxCombo * 2 + comboCinders + eliteKills * 6 + chestsOpened * 8;
   return Math.floor(base * player.greedMult * runMods.cinderMult);
 }
 
@@ -1338,6 +1642,7 @@ function applyChoice(o) {
     flash = 1; slowmo = Math.max(slowmo, 0.4);
     popup(player.x, player.y - 34, EVOLUTIONS[o.id].name + '!', EVOLUTIONS[o.id].color, 1.2);
     toast('Evolved: ' + EVOLUTIONS[o.id].name);
+    grantAchievement('evolve1');
   } else if (o.kind === 'weapon') {
     const cur = player.weapons[o.id];
     if (cur) cur.level++;
@@ -1357,7 +1662,17 @@ function applyChoice(o) {
 function endRun() {
   music.stop();
   sfx.die();
-  const earned = computeCinders();
+  // discovery bonus for newly seen foes
+  let discoveries = 0;
+  if (seenRun) {
+    Object.keys(seenRun).forEach(k => { if (!save.seen[k]) discoveries++; });
+  }
+  let earned = computeCinders();
+  if (discoveries > 0) {
+    const bonus = discoveries * 18;
+    earned += bonus;
+    runUnlocks.push('Codex discoveries: +' + bonus + ' ✦');
+  }
   save.cinders += earned;
   save.totals.runs++; save.totals.kills += killCount; save.totals.time += runTime; save.totals.cinders += earned;
   if (runTime > save.best.time) save.best.time = runTime;
@@ -1379,7 +1694,7 @@ function endRun() {
 /* =====================================================================
    SCREENS / UI
    ===================================================================== */
-const screens = { menu:'screen-menu', forge:'screen-forge', embers:'screen-embers', codex:'screen-codex', trials:'screen-trials', how:'screen-how', levelup:'screen-levelup', pause:'screen-pause', over:'screen-over' };
+const screens = { menu:'screen-menu', forge:'screen-forge', embers:'screen-embers', codex:'screen-codex', trials:'screen-trials', achievements:'screen-achievements', how:'screen-how', levelup:'screen-levelup', pause:'screen-pause', over:'screen-over' };
 function setState(s) {
   state = s;
   Object.values(screens).forEach(id => el(id).classList.add('hidden'));
@@ -1512,6 +1827,8 @@ function showGameOver(earned) {
     <div class="rs-row"><span>Level</span><b>${player.level}</b></div>
     <div class="rs-row"><span>Kills</span><b>${killCount}</b></div>
     <div class="rs-row"><span>Best streak</span><b>✦ ${maxCombo}</b></div>
+    <div class="rs-row"><span>Elites felled</span><b>${eliteKills}</b></div>
+    <div class="rs-row"><span>Chests opened</span><b>${chestsOpened}</b></div>
     <div class="rs-row"><span>Bosses felled</span><b>${bossKills}</b></div>
     ${cm > 1 ? `<div class="rs-row"><span>Trial bonus</span><b>+${Math.round((cm - 1) * 100)}%</b></div>` : ''}
     <div class="rs-row"><span>Cinders earned</span><b>✦ ${earned}</b></div>
@@ -1562,7 +1879,7 @@ function codexCard(kind, id) {
   return div;
 }
 let codexTimer = null;
-const CODEX_FOES = ['drifter', 'swarm', 'brute', 'shooter', 'dasher', 'splitter', 'bomber', 'orbiter', 'boss', 'boss2'];
+const CODEX_FOES = ['drifter', 'swarm', 'brute', 'shooter', 'dasher', 'splitter', 'bomber', 'orbiter', 'shade', 'nest', 'boss', 'boss2'];
 function renderCodex() {
   const foes = el('codex-foes'); foes.innerHTML = '';
   CODEX_FOES.forEach(t => foes.appendChild(codexCard('foe', t)));
@@ -1583,6 +1900,23 @@ function renderCodex() {
   }, 90);
 }
 
+function renderAchievements() {
+  const list = el('achievements-list'); list.innerHTML = '';
+  const done = ACHIEVEMENTS.filter(a => save.achievements[a.id]).length;
+  el('achievements-progress').textContent = done + '/' + ACHIEVEMENTS.length;
+  ACHIEVEMENTS.forEach(a => {
+    const got = !!save.achievements[a.id];
+    const unlock = EMBERS.find(e => e.unlock.type === 'achievement' && e.unlock.id === a.id);
+    const div = document.createElement('div');
+    div.className = 'card-item' + (got ? '' : ' ach-locked');
+    div.innerHTML = `
+      <div class="ci-head"><div class="ci-name">${got ? '★' : '☆'} ${a.label}</div>
+        <div class="ci-rank">${got ? 'Done' : '—'}</div></div>
+      ${unlock ? `<div class="ci-desc">Unlocks ${unlock.name}</div>` : '<div class="ci-desc">Tracked across every descent.</div>'}`;
+    list.appendChild(div);
+  });
+}
+
 /* ---- sound ---- */
 function setMuted(v) {
   muted = v; save.muted = v; persist();
@@ -1599,6 +1933,7 @@ el('btn-daily').onclick = () => { actx(); if (!muted) music.start(); dailyMode =
 el('btn-forge').onclick = () => { renderForge(); setState('forge'); };
 el('btn-embers').onclick = () => { renderEmbers(); setState('embers'); };
 el('btn-trials').onclick = () => { renderTrials(); setState('trials'); };
+el('btn-achievements').onclick = () => { renderAchievements(); setState('achievements'); };
 el('btn-codex').onclick = () => { renderCodex(); setState('codex'); };
 el('btn-how').onclick = () => setState('how');
 document.querySelectorAll('[data-back]').forEach(b => b.onclick = () => { renderMenuStats(); setState('menu'); });

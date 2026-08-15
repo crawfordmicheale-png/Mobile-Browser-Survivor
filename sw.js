@@ -1,7 +1,7 @@
 /* EMBER service worker — offline shell + install-to-home-screen.
    Network-first so a fresh deploy always wins when online, with the cache as
    an offline fallback. Bump CACHE when the strategy changes. */
-const CACHE = 'ember-v2';
+const CACHE = 'ember-v3';
 const ASSETS = [
   '.', 'index.html', 'style.css', 'game.js',
   'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png',

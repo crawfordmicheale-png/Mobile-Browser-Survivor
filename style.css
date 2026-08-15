@@ -92,6 +92,8 @@ html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--
   color:var(--gold);border-bottom:1px solid var(--line);padding-bottom:6px}
 .codex-unknown{opacity:.6}
 .codex-unknown .ci-name{color:#8a806f}
+.ach-locked{opacity:.55}
+.ach-locked .ci-name{color:#8a806f}
 #mute-btn{position:absolute;top:calc(14px + var(--safe-t));right:16px;width:44px;height:44px;border-radius:50%;
   border:1px solid var(--line);background:rgba(0,0,0,.35);color:var(--ink);font-size:20px;pointer-events:auto;cursor:pointer}
 .card-item .ci-rank{font-size:12px;color:#8a806f;white-space:nowrap}
