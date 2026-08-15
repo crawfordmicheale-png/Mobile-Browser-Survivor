@@ -36,34 +36,40 @@ new deploy always shows up when you're online (no manual cache-clearing).
 
 1. **Descend.** Survive waves that thicken every minute. Foes escalate — husks,
    shard swarms, brutes, aiming Sentinels, charging **Lancers**, dividing cells,
-   volatile **Igniters** (they burst into a ring of bolts on death), and circling
-   Orbiters. Every three minutes a boss rises, alternating between the **Warden**
-   (spiral fire) and the elite **Devourer** (aimed volleys + swarm summons).
+   volatile **Igniters**, circling Orbiters, blinking **Shades**, and spawning
+   **Nests**. Gold-ringed **elites** appear after the early minutes. Every three
+   minutes a boss rises, alternating between the **Warden** (spiral fire) and the
+   elite **Devourer** (aimed volleys + swarm summons).
 2. **Level up** mid-run — gain new weapons or stack passive upgrades. Each card
    shows the weapon's live art.
-3. **Chain kills** to build a streak — keep the combo alive for bonus cinders.
-4. **Fall** (or hold to 20:00 and win). Every descent earns **cinders** whether
-   you win or die.
-5. **Spend** cinders in the **Forge** and unlock **Embers**, then descend stronger.
+3. **World events** — Reliquary chests, elite hunts, and ember storms interrupt
+   the swarm. Timed milestones at 5 / 10 / 15 minutes vacuum motes and pay bonus
+   cinders.
+4. **Chain kills** to build a streak — every 10 kills pays bonus cinders mid-run.
+5. **Fall** (or hold to 20:00 and win). Every descent earns **cinders** whether
+   you win or die. Newly discovered foes pay a Codex bonus.
+6. **Spend** cinders in the **Forge** and unlock **Embers**, then descend stronger.
 
 ### Ways to play
 - **Descend** — the standard endless run.
 - **Trials** — optional curses (faster/tougher/more enemies, frailer you, harsher
-  bosses). Each raises the run's cinder payout; stack them for bigger rewards.
+  bosses, no hearts, denser elites). Each raises the run's cinder payout; stack
+  them for bigger rewards.
 - **Daily Trial** — a reproducible run seeded from the date, the same starting
   sequence for everyone that day, with its own saved best.
 
 ## Deep meta-progression (persistent, saved to `localStorage`)
 
-- **The Forge** — 16 permanent upgrades, each with multiple ranks and rising cost:
+- **The Forge** — 19 permanent upgrades, each with multiple ranks and rising cost:
   Vitality, Might, Haste, Swiftness, Precision, Ferocity, Magnetism, Wisdom,
   Greed, Fortune, Regeneration, Resilience, Multiplicity, Momentum, Rebirth,
-  and Head Start.
-- **Embers** — 6 unlockable characters, each with a different starting weapon and
-  temperament (The Spark, Nova, Warden, Hunter, Storm, Glutton). Unlocked with
-  cinders or by earning achievements.
-- **Achievements** — survival, level, and lifetime-kill milestones that unlock
-  Embers and are tracked across runs.
+  Head Start, **Foresight** (extra rerolls), **Persistence** (longer combo window),
+  and **Omen** (events arrive sooner).
+- **Embers** — 9 unlockable characters, each with a different starting weapon and
+  temperament (The Spark, Nova, Warden, Hunter, Storm, Glutton, **Pyre**,
+  **Seeker**, **Echo**). Unlocked with cinders or by earning achievements.
+- **Achievements** — survival, level, streak, elite, chest, evolution, and
+  lifetime-kill milestones. Tracked in a dedicated menu; some unlock Embers.
 - **Ascension (prestige)** — once you've invested enough in the Forge, ascend to
   reset all forge ranks and cinders for a permanent stacking power multiplier.
 - **Trials** — persistent per-run modifier toggles (curses) that trade difficulty
@@ -73,8 +79,9 @@ new deploy always shows up when you're online (no manual cache-clearing).
 
 Take a weapon to its max level **and** pick up its matching passive, and a special
 **Evolution** card appears at your next level-up — upgrading the weapon into a
-far stronger, white-gold form (e.g. Spark → **Starfall**, Nova → **Supernova**,
-Lance → **Sunlance**). Each weapon has one evolution; the Codex lists the pairings.
+far stronger, white-gold form (e.g. Spark → **Starfall**, Seeker → **Comet**,
+Echo Blade → **Guillotine**). Each weapon has one evolution; the Codex lists the
+pairings.
 
 ## Game feel
 
@@ -87,14 +94,16 @@ particles, and a low-life vignette.
 ## Codex tracking
 
 The Codex bestiary fills in as you play — foes you haven't met yet show as `???`
-until first encountered, with a running **seen count**.
+until first encountered, with a running **seen count**. First discoveries grant
+bonus cinders at the end of the run.
 
 ## Weapons (in-run)
 
 Spark (diamond bolts), Nova (radial burst), Orbit (guardian flames), Lance
-(piercing beam), Arc (chain lightning), Pyre Aura (burning field), and Cinder
-Field (lingering ground). Each has its own neon projectile shape and motion
-trail, scales through 8 levels, and you can carry up to 6 at once.
+(piercing beam), Arc (chain lightning), Pyre Aura (burning field), Cinder Field
+(lingering ground), **Seeker** (homing sparks), and **Echo Blade** (crescent
+waves). Each has its own neon projectile shape and motion trail, scales through
+8 levels, and you can carry up to 6 at once.
 
 ## Codex
 
@@ -128,9 +137,10 @@ so the hand-crafted neon shapes have a home in the menus.
   fill + bright outline + a signature accent) — no image assets. Embers: Spark
   (four-point star), Nova (rayed sun), Warden (segmented shield-hex), Hunter
   (arrowhead that turns to face movement), Storm (lightning ring), Glutton
-  (pulsing maw). Enemies each read at a glance: husk, shard, armored hex, aiming
-  turret, dividing cell, orbiting ring, and a spiked Warden boss with a rotating
-  eye. Character portraits render the same art live in the Embers menu.
+  (pulsing maw), Pyre (flame plume), Seeker (orbiting eye), Echo (twin crescents).
+  Enemies each read at a glance: husk, shard, armored hex, aiming turret, dividing
+  cell, orbiting ring, blinking shade, brood nest, and spiked bosses with rotating
+  eyes. Character portraits render the same art live in the Embers menu.
 - Rendering is kept cheap for phones: flat shapes with sparing glow, capped
   particle/entity counts, DPR-aware canvas, and a `dt`-clamped fixed-ish loop.
 - Menus are DOM overlays (crisp, touch-friendly, responsive); only the action is
